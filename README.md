@@ -1,6 +1,6 @@
 # AoE2HDControl
 
-Projeto de engenharia reversa e reconstrução de uma API de controle para **Age of Empires II HD (AoK HD.exe 5.8.INT, x86)**.
+Projeto de engenharia reversa e reconstrução de uma API de controle para **Age of Empires II HD (AoK HD.exe 5.8.INT, x86)**. O **AoE2Control para Definitive Edition** é usado apenas como referência conceitual para definir alvos semânticos; offsets, layouts e estruturas do DE não são assumidos válidos no HD.
 
 ## Estado atual
 
@@ -183,3 +183,4 @@ Depois disso: readiness estável e recursos `Food/Wood/Gold/Stone`.
 - `docs/functions.md`
 - `docs/structures.md`
 - `docs/roadmap.md`
+- `docs/aoe2control-reference.md` — referência conceitual do AoE2Control/DE, sem transplante de offsets
