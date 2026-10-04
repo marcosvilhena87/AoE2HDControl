@@ -4,510 +4,271 @@
 
 ## Alvo
 
-- Executável: `AoK HD.exe`
-- Versão: `5.8.INT`
+- Executável: AoK HD.exe
+- Versão: 5.8.INT
 - Plataforma: Windows x86 / PE32
-- ImageBase estático: `0x00400000`
+- ImageBase estático: 0x00400000
 - Arquitetura: i386
 - Timestamp PE registrado: 22/08/2018
-- SHA-256 registrado: `CBD10D81B93601FFB26773D250B7478969DA92D70792A40AE423294202E14650`
-- PDB referenciado: `AoK HD.pdb`
+- SHA-256: CBD10D81B93601FFB26773D250B7478969DA92D70792A40AE423294202E14650
 
-O binário apresenta C++ MSVC com RTTI, herança, métodos `__thiscall` e vtables.
+## World
 
-## Convenção x86 importante
+RTTI confirma:
 
-Em métodos de instância MSVC/x86:
-
-```text
-ECX = this
-```
-
-Esse padrão foi confirmado nas funções centrais investigadas.
-
----
-
-## Classe World — identificação confirmada
-
-RTTI:
-
-```text
+~~~text
 World
   ↓
 BaseWorld
-```
+~~~
 
-Vtable estática:
+Vtable estática: 0x009D329C.
 
-```text
-0x009D329C
-```
+Tamanho alocado observado: 0x2DC bytes.
 
-Foram observados 37 ponteiros de função.
+FUN_006889B0 recebe this em ECX e instala explicitamente a vtable:
 
-Estado:
-
-- `World`: ✅ RTTI
-- `World : BaseWorld`: ✅ RTTI
-- vtable `0x009D329C`: ✅
-- 37 slots observados: ✅
-
----
-
-## FUN_006889B0 — construção/inicialização de World
-
-Trecho-chave:
-
-```asm
+~~~asm
 006889D6  MOV ESI,ECX
 006889DE  CALL FUN_00729360
 006889F1  MOV dword ptr [ESI],009D329C
-```
+~~~
 
-A função:
+## FUN_00697800 / FUN_00735A00
 
-- recebe `this` em `ECX`;
-- chama um inicializador/base antes;
-- instala explicitamente a vtable de `World`;
-- é chamada imediatamente após alocação de `0x2DC` bytes e `memset`.
+FUN_00697800 está no slot virtual 33 de World (+0x84) e chama FUN_00735A00 em 0x006979F7.
 
-Fluxo de criação observado:
+O fluxo de ECX confirma que ambas operam sobre o mesmo World*.
 
-```text
-operator_new(0x2DC)
-        ↓
-memset(..., 0, 0x2DC)
-        ↓
-ECX = bloco
-        ↓
-FUN_006889B0
-        ↓
-World*
-```
+### World + 0x174
 
-Estado:
+Associado diretamente à string mLocalPlayerIndex.raw() e validado em runtime:
 
-- alocação `0x2DC`: ✅
-- escrita da vtable de `World`: ✅
-- papel de construtor/inicializador de `World`: ✅ estruturalmente
-- overload/nome-fonte exato: 🟡
-
----
-
-## FUN_00697800 — método virtual de World
-
-Endereço:
-
-```text
-0x00697800
-```
-
-Na vtable:
-
-```text
-índice 33
-offset = 33 * 4 = 0x84
-```
-
-Logo:
-
-```text
-World::vtable + 0x84 → FUN_00697800
-```
-
-Dentro dela:
-
-```text
-0x006979F7 → FUN_00735A00
-```
-
-Antes da chamada:
-
-```asm
-MOV ECX,[EBP + local_6c]
-...
-CALL FUN_00735A00
-```
-
-E no prólogo de `FUN_00697800`:
-
-```asm
-MOV [EBP + local_6c],ECX
-```
-
-Portanto as duas funções recebem o mesmo `World*`.
-
-Estado: ✅.
-
----
-
-## FUN_00735A00 — campos de World
-
-No prólogo:
-
-```asm
-MOV [EBP + local_c0],ECX
-```
-
-Logo `local_c0 = this = World*`.
-
-### World + 0x174 — mLocalPlayerIndex
-
-Trecho:
-
-```asm
-MOV EAX,[EBP + local_c0]
-MOV EAX,[EAX + 0x174]
-MOVZX EAX,AX
-...
-PUSH "mLocalPlayerIndex.raw()"
-```
-
-Validação runtime:
-
-```text
+~~~text
 World = 0x18431CD8
-World + 0x174 = 0x18431E4C
 WORD[World+0x174] = 1
-```
+~~~
 
-A partida foi executada com o usuário como Player 1.
+Estado: ✅ mLocalPlayerIndex.
 
-Estado:
+### World + 0x184/+0x188/+0x18C
 
-- offset `+0x174`: ✅
-- associação a `mLocalPlayerIndex`: ✅
-- consumo observado dos 16 bits baixos: ✅
-- tipo C++ exato do wrapper `PlayerIndex`: 🟡
+Runtime:
 
-### World + 0x184 / +0x188 — mPlayers begin/end
+~~~text
+World+0x184 = 0x105010E0
+World+0x188 = 0x105010F8
+World+0x18C = 0x105010F8
+stride      = 8
+size        = 3
+capacity    = 3
+~~~
 
-A função usa os dois campos e calcula quantidade com stride 8.
+Interpretação:
 
-Validação runtime:
+~~~text
++0x184 → begin
++0x188 → end
++0x18C → end_of_storage
+~~~
 
-```text
-mPlayers.begin = 0x105010E0
-mPlayers.end   = 0x105010F8
-difference     = 0x18
-stride         = 8
-size           = 3
-```
+O terceiro ponteiro é estruturalmente compatível com o layout std::vector MSVC x86.
 
-A partida tinha:
+## Owner/root e cadeia global
 
-```text
-1 humano + 1 IA + Gaia = 3 entradas
-```
+FUN_0062E5D0 salva ECX em local_20:
 
-Estado:
-
-- `World+0x184 = begin`: ✅
-- `World+0x188 = end`: ✅
-- stride 8: ✅
-- coleção `mPlayers`: ✅ pela semântica/asserts + runtime
-- `World+0x18C` como capacity/end-of-storage: 🟡 ainda não validado
-
----
-
-## Owner/root e cadeia global até World
-
-### FUN_0062E5D0
-
-Prólogo:
-
-```asm
+~~~asm
 0062E5FA  MOV [EBP + local_20],ECX
-```
+~~~
 
-Portanto:
+e armazena o novo World em Owner+0xC8:
 
-```text
-local_20 = this = Owner*
-```
-
-No caminho de criação de `World`:
-
-```asm
+~~~asm
 0062E671  MOV EAX,[EBP + local_20]
 0062E674  ADD EAX,0xC8
 ...
 0062E68B  MOV [EAX],ECX
-```
+~~~
+
+FUN_00659750 revela a origem global:
+
+~~~asm
+0065979D  MOV ECX,[DAT_00AF2C58]
+006597A8  CALL FUN_0062E5D0
+~~~
 
 Logo:
 
-```text
-Owner + 0xC8 → World*
-```
-
-O ponteiro antigo é destruído por chamada virtual através do slot 0, comportamento compatível com propriedade polimórfica.
-
-### Origem do Owner
-
-Em `FUN_00659750`:
-
-```asm
-0065979D  MOV ECX,[DAT_00AF2C58]
-006597A3  PUSH 1
-006597A5  PUSH EAX
-006597A8  CALL FUN_0062E5D0
-```
-
-Portanto:
-
-```text
+~~~text
 [DAT_00AF2C58] = Owner*
-```
+Owner + 0xC8   = World*
+~~~
 
-Estado:
+RVA do global: 0x006F2C58.
 
-- global `DAT_00AF2C58` fornece o `Owner*` nesse caminho: ✅
-- `Owner + 0xC8 → World*`: ✅
-- classe/nome real de `Owner`: 🟡 ainda desconhecido
+## Validação runtime da cadeia
 
----
-
-## Validação dinâmica da cadeia completa
-
-Execução analisada:
-
-```text
+~~~text
 moduleBase = 0x00D90000
-```
 
-RVA do global:
+[moduleBase+0x006F2C58] = 0x04C7A750
+[0x04C7A750+0xC8]       = 0x18431CD8
+[0x18431CD8]            = 0x0136329C
+moduleBase+0x005D329C   = 0x0136329C
+~~~
 
-```text
-0x00AF2C58 - 0x00400000 = 0x006F2C58
-```
+Estado: ✅.
 
-RVA da vtable de `World`:
+## Layout das entries de mPlayers
 
-```text
-0x009D329C - 0x00400000 = 0x005D329C
-```
+~~~text
+entry[0] = { 0x18AA701C, 0x18AA7010 }
+entry[1] = { 0x146EF234, 0x146EF228 }
+entry[2] = { 0x18B1F09C, 0x18B1F090 }
+~~~
 
-Valores observados:
+Nas três:
 
-```text
-[moduleBase + 0x006F2C58] = 0x04C7A750   // Owner*
-[0x04C7A750 + 0xC8]       = 0x18431CD8   // World*
-[0x18431CD8]              = 0x0136329C   // vtable
-moduleBase + 0x005D329C   = 0x0136329C   // esperado
-```
-
-A igualdade da vtable fornece validação independente da cadeia:
-
-```text
-module + 0x6F2C58
-      ↓
-    Owner*
-      ↓ +0xC8
-    World*
-      ↓ +0
-World vtable
-```
-
-Estado: ✅ validado no x32dbg.
-
----
-
-## mPlayers — elementos de 8 bytes
-
-Intervalo observado:
-
-```text
-0x105010E0 .. 0x105010F7
-```
-
-Três entradas:
-
-```text
-entry[0] @ 0x105010E0
-  +0 = 0x18AA701C
-  +4 = 0x18AA7010
-
-entry[1] @ 0x105010E8
-  +0 = 0x146EF234
-  +4 = 0x146EF228
-
-entry[2] @ 0x105010F0
-  +0 = 0x18B1F09C
-  +4 = 0x18B1F090
-```
-
-Em todas:
-
-```text
-entry.ptr = entry.control + 0x0C
-```
-
-No primeiro control block:
-
-```text
-0x18AA7010 +0x00 → 0x0136C88C
-0x18AA7010 +0x04 → 1
-0x18AA7010 +0x08 → 1
-0x18AA7010 +0x0C → início do objeto (0x18AA701C)
-```
-
-Esse padrão é fortemente compatível com implementação MSVC x86 de `std::shared_ptr<T>` criada com objeto inline no control block/`make_shared`.
+~~~text
+object = controlBlock + 0x0C
+~~~
 
 Modelo de trabalho:
 
-```cpp
+~~~cpp
 struct PlayerEntry {
-    void* object;        // +0
-    void* controlBlock;  // +4
+    WorldPlayer* object;
+    void* controlBlock;
 }; // 8 bytes
-```
+~~~
 
-Estado:
+RTTI STL encontrado:
 
-- dois ponteiros por entrada: ✅ observado
-- relação objeto = control + 0x0C: ✅ nas três entradas observadas
-- interpretação como `std::shared_ptr<T>`: 🟢 muito provável
-- tipo template exato: 🟡
+~~~text
+_Ref_count_obj<WorldPlayerGaia>
+_Ref_count_obj<WorldPlayerHumanOrCoop>
+_Ref_count_obj<WorldPlayerComputer>
+~~~
 
----
+Isso reforça fortemente:
 
-## RTTI do objeto apontado por mPlayers
+~~~text
+mPlayers ≈ std::vector<std::shared_ptr<WorldPlayer>>
+~~~
 
-Nos três objetos apontados pelas entradas foi observado o mesmo primeiro DWORD:
+## Hierarquia WorldPlayer
 
-```text
-runtime vtable = 0x0136C8A0
-```
+RTTI confirma:
 
-Com `moduleBase = 0x00D90000`:
-
-```text
-RVA           = 0x005DC8A0
-static vtable = 0x009DC8A0
-```
-
-No Ghidra:
-
-```text
-0x009DC89C → 0x00A23F58  // RTTI Complete Object Locator
-0x009DC8A0 → FUN_00758C90
-0x009DC8A4 → FUN_00748A40
-```
-
-O locator contém:
-
-```text
-0x00A23F64 → 0x00ACBAF4  // TypeDescriptor
-0x00A23F68 → 0x00A23F6C  // ClassHierarchyDescriptor
-```
-
-TypeDescriptor:
-
-```text
-0x00ACBAFC → ".?AVWorldPlayerGaia@@"
-```
-
-Logo a vtable `0x009DC8A0` resolve por RTTI para:
-
-```text
+~~~text
+WorldPlayer
+WorldPlayerBase
 WorldPlayerGaia
-```
+WorldPlayerHumanOrCoop
+WorldPlayerComputer
+WorldPlayerScenarioEditorPhantom
+~~~
 
-O hierarchy descriptor registra 3 classes.
+### Gaia
 
-Importante: **as três entradas runtime observadas apresentaram essa mesma vtable primária**. Portanto, não é seguro concluir que entry[1] e entry[2] sejam diretamente `WorldPlayerHumanOrCoop` e `WorldPlayerComputer`. A distinção de papel Gaia/humano/IA provavelmente está em outro campo, subobjeto ou relação ainda não mapeada.
+~~~text
+object runtime   = 0x18AA701C
+vtable runtime   = 0x0136C8A0
+vtable static    = 0x009DC8A0
+vtable[-1]       = 0x00A23F58
+TypeDescriptor   = 0x00ACBAF4
+RTTI name        = WorldPlayerGaia
+~~~
 
-RTTI adicional encontrado nas proximidades:
+Estado: ✅.
 
-```text
-0x00ACBB14 → ".?AVWorldPlayerHumanOrCoop@@"
-0x00ACBB3C → ".?AVWorldPlayerScenarioEditorPhantom@@"
-```
+### HumanOrCoop
 
-Essas classes existem no binário, mas ainda não foram ligadas diretamente às entradas runtime analisadas.
+~~~text
+object runtime   = 0x146EF234
+vtable runtime   = 0x0136CAE4
+vtable static    = 0x009DCAE4
+vtable[-1]       = 0x00A23FA8
+TypeDescriptor   = 0x00ACBB14
+RTTI name        = WorldPlayerHumanOrCoop
+~~~
 
----
+Estado: ✅.
 
-## Relações estruturais consolidadas
+### Computer
 
-```text
-DAT_00AF2C58
-      │
-      ▼
-    Owner*
-      │
-      └── +0xC8 ─────► World (0x2DC bytes)
-                         │
-                         ├── vtable 0x009D329C
-                         │      └── slot 33 / +0x84
-                         │             └── FUN_00697800
-                         │                    └── FUN_00735A00
-                         │
-                         ├── +0x174  mLocalPlayerIndex
-                         ├── +0x184  mPlayers.begin
-                         ├── +0x188  mPlayers.end
-                         └── +0x18C  ? capacity/end-of-storage
-                                     
-mPlayers entry (8 bytes)
-      │
-      ├── +0x0 → object pointer
-      └── +0x4 → control block
-```
+~~~text
+object runtime   = 0x18B1F09C
+vtable runtime   = 0x0136C618
+vtable static    = 0x009DC618
+vtable[-1]       = 0x00A23B44
+TypeDescriptor   = 0x00ACB750
+RTTI name        = WorldPlayerComputer
+~~~
 
----
+Estado: ✅.
 
-## ASLR / RVA
+Assim, na partida observada:
 
-Nunca depender de endereço runtime absoluto.
+~~~text
+mPlayers[0] → WorldPlayerGaia
+mPlayers[1] → WorldPlayerHumanOrCoop
+mPlayers[2] → WorldPlayerComputer
+~~~
 
-```cpp
-runtimeAddress = moduleBase + (staticAddress - 0x00400000);
-```
+## Prefixo comum dos player objects
 
-Offsets/RVAs úteis:
+Nas amostras:
 
-```text
-Owner global RVA = 0x006F2C58
-World vtable RVA = 0x005D329C
-```
+~~~text
+[player+0x04] = World*
+~~~
 
----
+Em player+0x08 foram observados:
+
+~~~text
+Gaia        = 2
+HumanOrCoop = 1
+Computer    = 3
+~~~
+
+Esse campo continua 🟡: candidato a id/índice/discriminador, ainda sem segunda validação independente.
+
+## Ciclo de vida ao criar nova partida
+
+Ao mudar para uma nova partida:
+
+~~~text
+Owner* = 0x04C7A750
+~~~
+
+permaneceu estável na amostra, mas Owner+0xC8 passou a apontar para:
+
+~~~text
+World* = 0x102F4108
+[World] = 0x0136329C
+~~~
+
+A nova instância já tinha a vtable correta, porém World+0x174 ainda não refletia o slot local esperado naquele momento.
+
+Conclusão:
+
+~~~text
+World* válido por vtable != World pronto para gameplay
+~~~
+
+O futuro adapter deve possuir uma verificação explícita de readiness.
 
 ## Próximo passo de maior retorno
 
-A cadeia até `World*` já está validada. O novo gargalo é **resolver o jogador local e o papel de cada player entry**.
+Com a segunda partida totalmente carregada:
 
-Prioridade:
+1. reler Owner+0xC8;
+2. validar a vtable de World;
+3. ler World+0x174;
+4. resolver mPlayers[localIndex];
+5. confirmar WorldPlayerHumanOrCoop;
+6. comparar player+0x08 com o índice local.
 
-1. investigar campos próximos ao início dos três objetos apontados;
-2. localizar o discriminador que separa Gaia / humano / IA;
-3. relacionar `mLocalPlayerIndex` à entrada correta;
-4. identificar RTTI/vtables auxiliares de `WorldPlayerHumanOrCoop` e `WorldPlayerComputer`;
-5. usar recursos visíveis (Food/Wood/Gold/Stone) para confirmar o `LocalPlayer*`.
-
----
-
-## Regra de documentação
-
-Para cada descoberta registrar:
-
-```text
-Endereço
-Função
-Assembly relevante
-Pseudocódigo
-Objeto this
-Offset
-Significado provável
-Evidência
-Nível de confiança
-Próxima validação
-```
-
-Classificação:
-
-- ✅ Confirmado
-- 🟢 Muito provável
-- 🟡 Hipótese
-- 🔴 Descartado
+Depois: Food/Wood/Gold/Stone.
