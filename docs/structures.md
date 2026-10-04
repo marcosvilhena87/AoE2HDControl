@@ -1,52 +1,84 @@
 # Estruturas provisórias
 
-## UnknownWorldLike
+Última atualização: 2026-10-03.
 
-Modelo de trabalho atual:
+## World
+
+A classe `World` foi identificada por RTTI e deriva de `BaseWorld`.
+
+Informações confirmadas:
+
+```text
+Classe: World
+Base: BaseWorld
+vtable: 0x009D329C
+slots observados: 37
+tamanho alocado observado: 0x2DC bytes
+```
+
+Modelo atual:
 
 ```cpp
-struct UnknownWorldLike
+struct World : BaseWorld
 {
-    void* vtable; // hipótese
+    // vtable = 0x009D329C
 
-    // unknown
+    // ... campos ainda não mapeados ...
 
     // +0x174
-    PlayerIndex mLocalPlayerIndex;
+    PlayerIndex mLocalPlayerIndex;     // 🟢
 
-    // unknown
+    // ...
 
     // +0x184
-    PlayerEntry* mPlayersBegin;
+    PlayerEntry* mPlayersBegin;        // ✅ estrutura / 🟢 semântica
 
     // +0x188
-    PlayerEntry* mPlayersEnd;
+    PlayerEntry* mPlayersEnd;          // ✅ estrutura / 🟢 semântica
 
     // +0x18C
-    // possível end-of-storage/capacity — ainda não confirmado
+    PlayerEntry* mPlayersCapacityEnd;  // 🟡 hipótese
+
+    // ... até pelo menos 0x2DC bytes ...
 };
 ```
 
-### Evidências
+### Offsets
 
 | Offset | Interpretação | Confiança |
 |---|---|---|
 | `+0x174` | `mLocalPlayerIndex` | 🟢 |
-| `+0x184` | início da coleção de jogadores | ✅ / 🟢 quanto ao nome |
-| `+0x188` | fim da coleção de jogadores | ✅ / 🟢 quanto ao nome |
+| `+0x184` | início da coleção associada a jogadores | ✅ / 🟢 nome |
+| `+0x188` | fim da coleção associada a jogadores | ✅ / 🟢 nome |
 | `+0x18C` | capacity/end-of-storage | 🟡 |
+
+## Vtable de World
+
+```text
+0x009D329C
+```
+
+Foram observados 37 slots.
+
+Entrada conhecida:
+
+```text
+slot 33
+offset +0x84
+→ FUN_00697800
+```
 
 ## PlayerEntry
 
-Tamanho/stride observado:
+Stride observado:
 
 ```text
 8 bytes
 ```
 
-Composição ainda desconhecida.
+A composição permanece desconhecida.
 
-Hipóteses possíveis:
+Hipóteses de trabalho possíveis:
 
 ```cpp
 struct PlayerEntry {
@@ -64,16 +96,49 @@ struct PlayerEntry {
 };
 ```
 
-Não tratar nenhuma delas como confirmada.
+Nenhuma delas deve ser tratada como confirmada.
 
-## Relação conceitual
+## Owner de World
+
+Existe uma estrutura ainda não identificada que mantém o ponteiro ativo de `World` em:
 
 ```text
-UnknownWorldLike
-    ├── mLocalPlayerIndex
-    └── mPlayers
-          ↓
-      PlayerEntry[]
-          ↓
-        Player ?
+owner + 0xC8
 ```
+
+Modelo:
+
+```cpp
+struct UnknownOwner
+{
+    // ...
+    World* world; // +0xC8
+};
+```
+
+A identidade de `UnknownOwner` é uma das principais pendências.
+
+## Relação estrutural
+
+```text
+UnknownOwner
+    │
+    └── +0xC8 ──► World
+                    │
+                    ├── +0x174  LocalPlayerIndex
+                    └── +0x184/+0x188  PlayerEntry[]
+                                            │
+                                            └── ? Player*
+```
+
+## Regra de modelagem
+
+Nunca transformar um padrão de layout em nome semântico definitivo sem evidência independente.
+
+Exemplo:
+
+```text
+begin/end + stride 8
+```
+
+confirma a existência de uma coleção contígua, mas não sozinho que seus elementos sejam `Player*`.
