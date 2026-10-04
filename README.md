@@ -20,41 +20,67 @@ Commands
 
 ## Estado atual
 
-A classe central **`World` já foi identificada por RTTI**.
+A espinha dorsal de acesso ao estado do jogo já foi identificada e **validada dinamicamente** com Ghidra + x32dbg.
 
 Principais descobertas:
 
 - executável alvo: `AoK HD.exe 5.8.INT`, PE32/x86;
-- ImageBase: `0x00400000`;
+- ImageBase estático: `0x00400000`;
 - RTTI confirma `World : BaseWorld`;
-- vtable de `World`: `0x009D329C`;
+- vtable estática de `World`: `0x009D329C`;
 - 37 slots observados na vtable;
 - `FUN_00697800` é o slot virtual 33 (`+0x84`);
 - `FUN_00697800` chama `FUN_00735A00` em `0x006979F7`;
 - ambas operam sobre o mesmo `World*`;
-- `World + 0x174` está fortemente associado a `mLocalPlayerIndex`;
-- `World + 0x184/+0x188` delimitam uma coleção associada a jogadores;
-- os elementos dessa coleção têm stride de 8 bytes;
-- uma instância de `World` é alocada com `0x2DC` bytes;
-- `FUN_006889B0` é forte candidato ao construtor/inicializador de `World`;
-- o ponteiro ativo é armazenado em `owner + 0xC8`;
-- a identidade/origem desse `owner` é o próximo alvo prioritário.
+- `FUN_006889B0` instala a vtable de `World` e é usada após `operator_new(0x2DC)`;
+- tamanho alocado observado de `World`: `0x2DC` bytes;
+- `DAT_00AF2C58` contém um ponteiro para o objeto owner/root usado no caminho validado;
+- `owner + 0xC8 → World*`;
+- `World + 0x174 → mLocalPlayerIndex`;
+- `World + 0x184/+0x188` são begin/end da coleção `mPlayers`;
+- `mPlayers.size() = (end - begin) / 8`;
+- em partida com 1 humano + 1 IA, a coleção tinha 3 entradas: Gaia + humano + IA;
+- cada entrada de `mPlayers` tem 8 bytes e o layout observado é fortemente compatível com `std::shared_ptr<T>` MSVC x86;
+- o objeto apontado pelas entradas começa com vtable cujo RTTI resolve para `WorldPlayerGaia`; curiosamente, as três entradas observadas apresentaram a mesma vtable primária, então a distinção Gaia/humano/IA ainda precisa ser localizada em outro campo/objeto.
 
-Modelo atual:
+## Cadeia runtime validada
+
+Com ASLR, usar RVA:
 
 ```text
-UnknownOwner
-    │
-    └── +0xC8 ─────► World (0x2DC bytes)
-                       │
-                       ├── vtable 0x009D329C
-                       │      └── slot 33 → FUN_00697800
-                       │                       └── FUN_00735A00
-                       ├── +0x174  mLocalPlayerIndex
-                       └── +0x184/+0x188  coleção de PlayerEntry (stride 8)
+Owner global RVA = 0x006F2C58
+World vtable RVA = 0x005D329C
 ```
 
-Veja:
+Cadeia:
+
+```text
+[moduleBase + 0x006F2C58]
+        ↓ deref
+      Owner*
+        ↓ +0xC8 / deref
+      World*
+        │
+        ├── +0x000 → vtable = moduleBase + 0x005D329C
+        ├── +0x174 → mLocalPlayerIndex
+        ├── +0x184 → mPlayers.begin
+        └── +0x188 → mPlayers.end
+```
+
+Exemplo validado em runtime:
+
+```text
+moduleBase              = 0x00D90000
+[moduleBase+0x6F2C58]   = 0x04C7A750   // Owner*
+[Owner+0xC8]            = 0x18431CD8   // World*
+[World]                 = 0x0136329C   // World vtable runtime
+WORD[World+0x174]       = 1            // jogador local
+mPlayers.begin          = 0x105010E0
+mPlayers.end            = 0x105010F8
+(end-begin)/8           = 3
+```
+
+## Documentação
 
 - [docs/reverse-engineering.md](docs/reverse-engineering.md) — consolidação técnica;
 - [docs/functions.md](docs/functions.md) — funções mapeadas;
@@ -63,29 +89,18 @@ Veja:
 
 ## Próximo passo de maior retorno
 
-Na função que contém a criação/substituição de `World` e a região `0x0062E65A`, identificar **a primeira atribuição que define `local_20` / `owner`**.
+A cadeia até `World*` já está fechada. O gargalo agora é resolver **o jogador local de forma semântica e estável**:
 
-Queremos fechar a cadeia:
-
-```text
-global/root ?
-      ↓
-    owner
-      ↓ +0xC8
-    World*
-```
-
-Isso pode fornecer a primeira implementação robusta de:
-
-```cpp
-World* GetWorld();
-```
+1. entender o layout exato das entradas de 8 bytes de `mPlayers`;
+2. localizar onde Gaia/humano/IA são distinguidos;
+3. relacionar `mLocalPlayerIndex` à entrada correta;
+4. mapear recursos do jogador local (Food/Wood/Gold/Stone) como próxima validação forte.
 
 ## Regra de documentação
 
 Toda descoberta é classificada como:
 
-- ✅ **Confirmado** — provado pelo assembly, RTTI ou evidências independentes;
+- ✅ **Confirmado** — provado pelo assembly, RTTI ou validação runtime;
 - 🟢 **Muito provável** — evidência estrutural/semântica forte;
 - 🟡 **Hipótese** — plausível, mas ainda precisa de validação;
 - 🔴 **Descartado** — hipótese testada e incompatível com o binário.
@@ -118,4 +133,4 @@ AoE2HDControl/
    └─ roadmap.md
 ```
 
-As pastas de código serão adicionadas quando a cadeia de acesso a `World` e as estruturas principais estiverem suficientemente validadas.
+As pastas de código serão adicionadas quando as estruturas principais estiverem suficientemente validadas para uma primeira implementação segura de `GetWorld()` e `GetLocalPlayer()`.
