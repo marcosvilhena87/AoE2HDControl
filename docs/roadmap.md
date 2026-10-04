@@ -2,83 +2,98 @@
 
 Última atualização: 2026-10-03.
 
-## Marco 1 — identificar World/GameState
+## Marco 1 — cadeia estável até World
 
-Status: ✅ identificação estrutural principal concluída.
+Status: ✅ concluído para o build analisado.
 
-Já obtido:
+Obtido:
 
 ```text
 RTTI: World : BaseWorld
 vtable: 0x009D329C
 tamanho observado: 0x2DC bytes
-construtor/inicializador: FUN_006889B0 (🟢)
-owner + 0xC8 → World*
+FUN_006889B0 instala a vtable de World
+DAT_00AF2C58 → Owner*
+Owner + 0xC8 → World*
 ```
 
-Ainda falta para fechar o marco operacional:
+RVA operacional:
 
-- identificar a classe do `owner`;
-- descobrir de onde vem a instância de `owner`;
-- obter uma cadeia runtime estável até `World*`.
+```text
+Owner global RVA = 0x006F2C58
+World vtable RVA = 0x005D329C
+```
 
-Meta:
+Validação runtime:
+
+```text
+[moduleBase+0x6F2C58] → Owner*
+[Owner+0xC8]          → World*
+[World]               → moduleBase+0x5D329C
+```
+
+Meta conceitual atingida:
 
 ```cpp
 World* GetWorld();
 ```
 
-### Próxima tarefa concreta — maior retorno
-
-Na função que contém a criação de `World` e a região `0x0062E65A`:
-
-> localizar a primeira atribuição/escrita que define `local_20` / `owner`.
-
-Queremos reconstruir:
-
-```text
-? global/root
-      ↓
-   owner
-      ↓ +0xC8
-   World*
-```
-
-Se `owner` vier de um global/singleton estável, o problema central de localização da instância pode ficar praticamente resolvido.
+Ainda falta tornar a resolução resiliente a outros builds/patches por assinatura/padrão, em vez de depender apenas de RVA.
 
 ---
 
-## Marco 2 — localizar jogador local
+## Marco 2 — jogador local
 
-Status: em andamento.
+Status: 🟢 avançado, ainda não fechado semanticamente.
 
-Já obtido:
+Confirmado:
 
 ```text
-World + 0x174 ≈ mLocalPlayerIndex
-World + 0x184 = início de coleção
-World + 0x188 = fim de coleção
+World + 0x174 → mLocalPlayerIndex
+World + 0x184 → mPlayers.begin
+World + 0x188 → mPlayers.end
 stride = 8 bytes
 ```
+
+Runtime:
+
+```text
+1 humano + 1 IA + Gaia → 3 entries
+```
+
+Cada entry possui dois ponteiros e o padrão observado é compatível com `std::shared_ptr<T>`.
+
+RTTI da vtable primária dos objetos apontados:
+
+```text
+0x009DC8A0 → WorldPlayerGaia
+```
+
+Surpresa importante: as três entradas observadas usam essa mesma vtable primária. Portanto a distinção Gaia/humano/IA ainda está em aberto.
+
+### Próxima tarefa concreta — maior retorno
+
+Descobrir **onde o papel de cada jogador é discriminado**.
+
+Candidatos:
+
+1. campo `player+0x08` (valores observados 2/1/3);
+2. outro subobjeto/vtable dentro de cada player;
+3. relação externa/controller específica;
+4. RTTI/vtables de `WorldPlayerHumanOrCoop` e `WorldPlayerComputer`.
 
 Meta:
 
 ```cpp
 auto localIndex = world->mLocalPlayerIndex;
-auto localPlayer = world->GetPlayer(localIndex);
+auto localPlayer = ResolveLocalPlayer(world, localIndex);
 ```
-
-Pendências:
-
-1. confirmar comportamento runtime de `+0x174`;
-2. decompor `PlayerEntry`;
-3. identificar qual campo de cada entry é `Player*`;
-4. validar indexação pelo jogador local;
-5. inspecionar `+0x18C`.
 
 ---
 
 ## Marco 3 — recursos do jogador
+
+Status: próximo grande marco funcional.
 
 Prioridade:
 
@@ -90,19 +105,23 @@ Stone
 Population
 ```
 
-Uso principal: validação runtime.
+Uso principal: validação semântica de `LocalPlayer*`.
 
 Estratégia:
 
 ```text
-Player*
-  ↓
-campos candidatos
-  ↓
+player candidate
+      ↓
+campos/containers candidatos
+      ↓
 comparar com valores visíveis na UI
-  ↓
-confirmar offsets/tipos
+      ↓
+alterar recurso no jogo por meios normais
+      ↓
+observar qual campo acompanha a mudança
 ```
+
+Primeiro objetivo: leitura somente.
 
 ---
 
@@ -148,19 +167,33 @@ Objetivos futuros:
 - research;
 - target object.
 
+Somente após leitura de estado e identificação de jogadores/objetos estarem sólidas.
+
+---
+
+## Marco 6 — robustez por versão
+
+Depois que os primeiros acessos funcionais existirem:
+
+- substituir endereços absolutos por RVA;
+- preferir signature scanning para raízes/funções críticas;
+- validar RTTI/vtable antes de usar um ponteiro;
+- adicionar version/hash gate;
+- falhar de forma segura em builds desconhecidos.
+
 ---
 
 ## Ordem de investigação recomendada
 
 ```text
-1. origem de owner/local_20
-2. cadeia estável owner+0xC8 → World*
-3. validar World+0x174
-4. decompor PlayerEntry de 8 bytes
-5. resolver Local Player*
-6. mapear recursos
-7. mapear objetos/unidades
-8. comandos
+1. localizar discriminador Gaia / humano / IA
+2. resolver LocalPlayer* de forma confiável
+3. mapear Food/Wood/Gold/Stone
+4. confirmar Player layout
+5. mapear objetos/unidades
+6. mapear comandos
+7. transformar RVAs críticos em signatures
+8. implementar HDAdapter
 ```
 
-Evitar dispersar esforço em funções ainda sem ligação estrutural clara — por exemplo `FUN_00659750` — enquanto a cadeia até `World*` estiver a um passo de ser fechada.
+A cadeia até `World*` deixou de ser o gargalo. O foco agora deve permanecer em `mPlayers` e na resolução do jogador local.
