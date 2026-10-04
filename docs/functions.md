@@ -5,91 +5,151 @@
 ## FUN_006889B0
 
 - Endereço: `0x006889B0`
-- Papel atual: inicializador/construtor fortemente associado a `World`
-- Evidência:
-  - chamada imediatamente após `operator_new(0x2DC)`;
-  - o bloco recém-alocado é zerado/inicializado antes da chamada;
-  - o resultado entra na cadeia que termina em `owner+0xC8 = World*`.
-- Interpretação:
-  - `World::World` ou inicializador principal de `World`.
-- Confiança: 🟢 muito provável
-- Próxima validação:
-  - localizar escrita da vtable `0x009D329C`;
-  - mapear classes-base/inicializadores chamados;
-  - confirmar o objeto retornado/propagado.
+- Papel: construtor/inicializador estrutural de `World`
+- Convenção: `ECX = this`
+- Evidência principal:
+
+```asm
+006889D6  MOV ESI,ECX
+006889DE  CALL FUN_00729360
+006889F1  MOV dword ptr [ESI],009D329C
+```
+
+- Contexto de criação:
+  - chamada após `operator_new(0x2DC)`;
+  - bloco zerado com `memset(...,0,0x2DC)`;
+  - instala a vtable confirmada de `World`.
+- Confiança:
+  - inicialização de uma instância de `World`: ✅
+  - nome-fonte/overload exato do construtor: 🟡
 
 ## FUN_00697800
 
 - Endereço: `0x00697800`
 - Classe: `World`
-- Convenção: provável `__thiscall`
+- Convenção: `__thiscall` compatível
 - `this`: `World*` em `ECX`
 - Vtable:
   - início: `0x009D329C`
   - índice: `33`
   - offset: `+0x84`
-- Call site relevante:
+- Call site:
   - `0x006979F7 → FUN_00735A00`
-- Status:
-  - método virtual de `World`: ✅ confirmado
-- Observação:
-  - o fluxo indica que `FUN_00735A00` recebe o mesmo `World*`.
+- Estado: ✅ método virtual de `World`
 
 ## FUN_00735A00
 
 - Endereço: `0x00735A00`
-- Convenção provável: `__thiscall`
 - `this`: `World*`
-- Campos relevantes:
-  - `+0x174`
-  - `+0x184`
-  - `+0x188`
-- Semântica associada:
-  - `+0x174 ≈ mLocalPlayerIndex`
-  - `+0x184/+0x188 ≈ mPlayers begin/end`
-  - stride dos elementos: 8 bytes
-- Chamador conhecido:
-  - `FUN_00697800` via `0x006979F7`
-- Outra referência observada:
-  - `0x009DB0A8`
+- Prólogo salva `ECX` em `local_c0`
+- Campos mapeados:
+  - `+0x174 → mLocalPlayerIndex`
+  - `+0x184 → mPlayers.begin`
+  - `+0x188 → mPlayers.end`
+- Evidência:
+  - string/assert `mLocalPlayerIndex.raw()`;
+  - cálculo de tamanho da coleção com stride 8;
+  - validação runtime de índice local e quantidade de players.
+- Confiança: ✅ para os offsets acima.
+
+## FUN_0062E5D0
+
+- Endereço: `0x0062E5D0`
+- `this`: objeto owner/root ainda sem nome de classe
+- Prólogo:
+
+```asm
+0062E5FA  MOV [EBP + local_20],ECX
+```
+
+Logo:
+
+```text
+local_20 = Owner*
+```
+
+- Cria `World`:
+  - `operator_new(0x2DC)`
+  - `memset`
+  - `FUN_006889B0`
+- Armazena o novo ponteiro em:
+
+```text
+Owner + 0xC8
+```
+
+Trecho:
+
+```asm
+0062E671  MOV EAX,[EBP + local_20]
+0062E674  ADD EAX,0xC8
+...
+0062E68B  MOV [EAX],ECX
+```
+
+- Se houver objeto antigo, chama slot virtual 0 com argumento `1`.
 - Confiança:
-  - método sobre `World`: ✅
-  - nomes exatos dos campos: 🟢
+  - `Owner+0xC8 → World*`: ✅
+  - semântica exata da função (new game/load/create session): 🟡
 
 ## FUN_00659750
 
 - Endereço: `0x00659750`
-- Já inspecionada no Ghidra.
-- Variáveis locais observadas incluem:
-  - `local_8`
-  - `local_10`
-  - `local_14`
-- Ainda não há evidência suficiente para atribuir papel semântico seguro.
-- Confiança: 🟡 não classificada semanticamente
-- Regra:
-  - não conectá-la a `World`, `Player` ou comandos sem nova evidência.
+- Importância: caller que revela a origem global do `Owner*`
 
-## Rotina contendo 0x0062E65A
+Trecho:
 
-A função que contém essa região executa um caminho de criação/substituição de `World`:
-
-```text
-operator_new(0x2DC)
-        ↓
-memset / inicialização
-        ↓
-FUN_006889B0
-        ↓
-novo World*
-        ↓
-owner + 0xC8
+```asm
+0065979D  MOV ECX,[DAT_00AF2C58]
+006597A3  PUSH 0x1
+006597A5  PUSH EAX
+006597A8  CALL FUN_0062E5D0
 ```
 
-Se já existir um ponteiro antigo em `owner+0xC8`, ele é destruído por chamada virtual através do primeiro slot da vtable.
+Conclusão:
 
-Próxima investigação prioritária:
+```text
+[DAT_00AF2C58] = Owner*
+```
 
-> descobrir de onde vem `local_20` / `owner`.
+Estado: ✅ para essa cadeia de chamada.
+
+## FUN_00758C90 / vtable 0x009DC8A0
+
+A vtable estática em:
+
+```text
+0x009DC8A0
+```
+
+tem:
+
+```text
+slot 0 → FUN_00758C90
+slot 1 → FUN_00748A40
+```
+
+Seu RTTI Complete Object Locator está em:
+
+```text
+0x00A23F58
+```
+
+e o TypeDescriptor resolve para:
+
+```text
+.?AVWorldPlayerGaia@@
+```
+
+Estado: ✅ vtable associada por RTTI a `WorldPlayerGaia`.
+
+Observação runtime importante: os três objetos apontados pelas três entradas observadas de `mPlayers` apresentaram essa mesma vtable primária. A razão/semântica ainda está aberta; não classificar entry[1]/entry[2] como Human/Computer apenas pela posição.
+
+## FUN_00729360
+
+- Chamada no início de `FUN_006889B0`, antes da escrita da vtable de `World`.
+- Hipótese: inicializador/construtor da base `BaseWorld` ou rotina relacionada.
+- Confiança: 🟡 até mapear RTTI/vtable writes internos.
 
 ## Modelo para novas funções
 
