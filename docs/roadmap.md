@@ -6,194 +6,124 @@
 
 Status: ✅ concluído para o build analisado.
 
-Obtido:
-
-```text
-RTTI: World : BaseWorld
-vtable: 0x009D329C
-tamanho observado: 0x2DC bytes
-FUN_006889B0 instala a vtable de World
+~~~text
 DAT_00AF2C58 → Owner*
 Owner + 0xC8 → World*
-```
+World vtable = 0x009D329C
+World size observado = 0x2DC
+~~~
 
 RVA operacional:
 
-```text
+~~~text
 Owner global RVA = 0x006F2C58
 World vtable RVA = 0x005D329C
-```
-
-Validação runtime:
-
-```text
-[moduleBase+0x6F2C58] → Owner*
-[Owner+0xC8]          → World*
-[World]               → moduleBase+0x5D329C
-```
-
-Meta conceitual atingida:
-
-```cpp
-World* GetWorld();
-```
-
-Ainda falta tornar a resolução resiliente a outros builds/patches por assinatura/padrão, em vez de depender apenas de RVA.
-
----
+~~~
 
 ## Marco 2 — jogador local
 
-Status: 🟢 avançado, ainda não fechado semanticamente.
+Status: 🟢 quase fechado.
 
 Confirmado:
 
-```text
+~~~text
 World + 0x174 → mLocalPlayerIndex
 World + 0x184 → mPlayers.begin
 World + 0x188 → mPlayers.end
-stride = 8 bytes
-```
+World + 0x18C → vector-like end_of_storage
+stride = 8
+~~~
 
-Runtime:
+Partida observada:
 
-```text
-1 humano + 1 IA + Gaia → 3 entries
-```
+~~~text
+mPlayers[0] → WorldPlayerGaia
+mPlayers[1] → WorldPlayerHumanOrCoop
+mPlayers[2] → WorldPlayerComputer
+~~~
 
-Cada entry possui dois ponteiros e o padrão observado é compatível com `std::shared_ptr<T>`.
+RTTI STL reforça o modelo vector<shared_ptr<WorldPlayer>>.
 
-RTTI da vtable primária dos objetos apontados:
+Na primeira partida totalmente carregada:
 
-```text
-0x009DC8A0 → WorldPlayerGaia
-```
+~~~text
+mLocalPlayerIndex = 1
+mPlayers[1]       = WorldPlayerHumanOrCoop
+~~~
 
-Surpresa importante: as três entradas observadas usam essa mesma vtable primária. Portanto a distinção Gaia/humano/IA ainda está em aberto.
+### Próxima tarefa concreta
 
-### Próxima tarefa concreta — maior retorno
+Repetir com o humano em Player 2, depois do mapa estar completamente carregado:
 
-Descobrir **onde o papel de cada jogador é discriminado**.
+~~~text
+World+0x174 == novo índice local
+mPlayers[index] == WorldPlayerHumanOrCoop
+player+0x04 == World*
+player+0x08 == ? índice/id
+~~~
 
-Candidatos:
+## Marco 3 — readiness / lifecycle
 
-1. campo `player+0x08` (valores observados 2/1/3);
-2. outro subobjeto/vtable dentro de cada player;
-3. relação externa/controller específica;
-4. RTTI/vtables de `WorldPlayerHumanOrCoop` e `WorldPlayerComputer`.
+Novo requisito descoberto.
+
+É necessário distinguir:
+
+~~~text
+World pointer válido
+~~~
+
+de:
+
+~~~text
+World completamente inicializado para gameplay
+~~~
+
+Uma nova instância observada já possuía a vtable correta enquanto mLocalPlayerIndex ainda não refletia o slot esperado.
 
 Meta:
 
-```cpp
-auto localIndex = world->mLocalPlayerIndex;
-auto localPlayer = ResolveLocalPlayer(world, localIndex);
-```
+~~~cpp
+bool IsWorldReady(const World*);
+~~~
 
----
+## Marco 4 — recursos do jogador
 
-## Marco 3 — recursos do jogador
+Depois de fechar GetLocalPlayer():
 
-Status: próximo grande marco funcional.
-
-Prioridade:
-
-```text
+~~~text
 Food
 Wood
 Gold
 Stone
 Population
-```
-
-Uso principal: validação semântica de `LocalPlayer*`.
-
-Estratégia:
-
-```text
-player candidate
-      ↓
-campos/containers candidatos
-      ↓
-comparar com valores visíveis na UI
-      ↓
-alterar recurso no jogo por meios normais
-      ↓
-observar qual campo acompanha a mudança
-```
+~~~
 
 Primeiro objetivo: leitura somente.
 
----
+## Marco 5 — objetos/unidades
 
-## Marco 4 — objetos/unidades
+Mapear object id, owner, type, position, HP e coleções.
 
-Mapear:
+## Marco 6 — comandos
 
-- object id;
-- owner;
-- type;
-- position;
-- HP;
-- coleção de objetos do jogador/world.
+Investigar RGE_Command e TRIBE_Command somente após leitura de estado/jogadores/objetos estar sólida.
 
-Meta conceitual:
+## Marco 7 — robustez por versão
 
-```cpp
-GetObjectById()
-GetObjectsByType()
-GetObjectsByTypes()
-GetOwningPlayer()
-GetTownCenters()
-```
+- signatures para raízes/funções críticas;
+- version/hash gate;
+- validação RTTI/vtable;
+- falha segura em build desconhecido.
 
----
+## Ordem atual recomendada
 
-## Marco 5 — comandos
-
-Investigar:
-
-```text
-RGE_Command
-TRIBE_Command
-```
-
-Objetivos futuros:
-
-- move;
-- attack;
-- build;
-- gather;
-- train;
-- research;
-- target object.
-
-Somente após leitura de estado e identificação de jogadores/objetos estarem sólidas.
-
----
-
-## Marco 6 — robustez por versão
-
-Depois que os primeiros acessos funcionais existirem:
-
-- substituir endereços absolutos por RVA;
-- preferir signature scanning para raízes/funções críticas;
-- validar RTTI/vtable antes de usar um ponteiro;
-- adicionar version/hash gate;
-- falhar de forma segura em builds desconhecidos.
-
----
-
-## Ordem de investigação recomendada
-
-```text
-1. localizar discriminador Gaia / humano / IA
-2. resolver LocalPlayer* de forma confiável
-3. mapear Food/Wood/Gold/Stone
-4. confirmar Player layout
+~~~text
+1. concluir teste Player 2 após carregamento completo
+2. fechar GetLocalPlayer()
+3. mapear readiness de World
+4. mapear Food/Wood/Gold/Stone
 5. mapear objetos/unidades
 6. mapear comandos
-7. transformar RVAs críticos em signatures
+7. trocar RVAs críticos por signatures
 8. implementar HDAdapter
-```
-
-A cadeia até `World*` deixou de ser o gargalo. O foco agora deve permanecer em `mPlayers` e na resolução do jogador local.
+~~~
