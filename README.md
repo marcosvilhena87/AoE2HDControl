@@ -2,135 +2,98 @@
 
 Projeto de engenharia reversa e reconstrução de uma API de controle para **Age of Empires II HD (AoK HD.exe 5.8.INT, x86)**.
 
-## Objetivo
-
-Mapear progressivamente as estruturas internas do jogo para chegar a uma interface de alto nível semelhante à ideia original do AoE2Control:
-
-```text
-World
-  ↓
-Players
-  ↓
-Local Player
-  ↓
-Resources / Objects / Units
-  ↓
-Commands
-```
-
 ## Estado atual
 
-A espinha dorsal de acesso ao estado do jogo já foi identificada e **validada dinamicamente** com Ghidra + x32dbg.
+A cadeia central já foi validada com Ghidra, RTTI e x32dbg.
 
 Principais descobertas:
 
-- executável alvo: `AoK HD.exe 5.8.INT`, PE32/x86;
-- ImageBase estático: `0x00400000`;
-- RTTI confirma `World : BaseWorld`;
-- vtable estática de `World`: `0x009D329C`;
-- 37 slots observados na vtable;
-- `FUN_00697800` é o slot virtual 33 (`+0x84`);
-- `FUN_00697800` chama `FUN_00735A00` em `0x006979F7`;
-- ambas operam sobre o mesmo `World*`;
-- `FUN_006889B0` instala a vtable de `World` e é usada após `operator_new(0x2DC)`;
-- tamanho alocado observado de `World`: `0x2DC` bytes;
-- `DAT_00AF2C58` contém um ponteiro para o objeto owner/root usado no caminho validado;
-- `owner + 0xC8 → World*`;
-- `World + 0x174 → mLocalPlayerIndex`;
-- `World + 0x184/+0x188` são begin/end da coleção `mPlayers`;
-- `mPlayers.size() = (end - begin) / 8`;
-- em partida com 1 humano + 1 IA, a coleção tinha 3 entradas: Gaia + humano + IA;
-- cada entrada de `mPlayers` tem 8 bytes e o layout observado é fortemente compatível com `std::shared_ptr<T>` MSVC x86;
-- o objeto apontado pelas entradas começa com vtable cujo RTTI resolve para `WorldPlayerGaia`; curiosamente, as três entradas observadas apresentaram a mesma vtable primária, então a distinção Gaia/humano/IA ainda precisa ser localizada em outro campo/objeto.
+- ImageBase estático: 0x00400000;
+- RTTI confirma World : BaseWorld;
+- vtable estática de World: 0x009D329C;
+- FUN_00697800 é o slot virtual 33 (+0x84);
+- FUN_006889B0 instala a vtable de World;
+- tamanho alocado observado de World: 0x2DC bytes;
+- DAT_00AF2C58 fornece o Owner* usado na cadeia validada;
+- Owner + 0xC8 → World*;
+- World + 0x174 → mLocalPlayerIndex;
+- World + 0x184/+0x188/+0x18C exibem layout compatível com std::vector x86: begin/end/end-of-storage;
+- mPlayers.size() = (end - begin) / 8;
+- cada entrada de mPlayers tem 8 bytes e é fortemente compatível com std::shared_ptr<WorldPlayer>;
+- RTTI confirma as três classes concretas observadas: WorldPlayerGaia, WorldPlayerHumanOrCoop e WorldPlayerComputer;
+- RTTI também confirma WorldPlayer e WorldPlayerBase;
+- RTTI de _Ref_count_obj<...> para Gaia/Human/Computer reforça a interpretação de std::shared_ptr.
 
 ## Cadeia runtime validada
 
-Com ASLR, usar RVA:
-
-```text
+~~~text
 Owner global RVA = 0x006F2C58
 World vtable RVA = 0x005D329C
-```
 
-Cadeia:
-
-```text
 [moduleBase + 0x006F2C58]
-        ↓ deref
+        ↓
       Owner*
-        ↓ +0xC8 / deref
+        ↓ +0xC8
       World*
-        │
         ├── +0x000 → vtable = moduleBase + 0x005D329C
         ├── +0x174 → mLocalPlayerIndex
         ├── +0x184 → mPlayers.begin
-        └── +0x188 → mPlayers.end
-```
+        ├── +0x188 → mPlayers.end
+        └── +0x18C → mPlayers.end_of_storage
+~~~
 
-Exemplo validado em runtime:
+Exemplo validado em uma partida totalmente carregada:
 
-```text
+~~~text
 moduleBase              = 0x00D90000
-[moduleBase+0x6F2C58]   = 0x04C7A750   // Owner*
-[Owner+0xC8]            = 0x18431CD8   // World*
-[World]                 = 0x0136329C   // World vtable runtime
-WORD[World+0x174]       = 1            // jogador local
+[moduleBase+0x6F2C58]   = 0x04C7A750
+[Owner+0xC8]            = 0x18431CD8
+[World]                 = 0x0136329C
+WORD[World+0x174]       = 1
 mPlayers.begin          = 0x105010E0
 mPlayers.end            = 0x105010F8
-(end-begin)/8           = 3
-```
+mPlayers.end_of_storage = 0x105010F8
+size                    = 3
+capacity                = 3
+~~~
 
-## Documentação
+Entradas observadas:
 
-- [docs/reverse-engineering.md](docs/reverse-engineering.md) — consolidação técnica;
-- [docs/functions.md](docs/functions.md) — funções mapeadas;
-- [docs/structures.md](docs/structures.md) — estruturas provisórias;
-- [docs/roadmap.md](docs/roadmap.md) — ordem de investigação.
+~~~text
+mPlayers[0].object = 0x18AA701C → WorldPlayerGaia
+mPlayers[1].object = 0x146EF234 → WorldPlayerHumanOrCoop
+mPlayers[2].object = 0x18B1F09C → WorldPlayerComputer
+~~~
+
+## Ciclo de vida
+
+Ao criar uma nova partida, o Owner* permaneceu estável na amostra, mas Owner+0xC8 passou a apontar para uma nova instância de World:
+
+~~~text
+Owner*       = 0x04C7A750
+novo World*  = 0x102F4108
+[novo World] = 0x0136329C
+~~~
+
+Nesse estágio inicial, World+0x174 ainda não refletia o slot local esperado. Portanto, vtable válida não significa necessariamente World pronto para leitura de gameplay.
 
 ## Próximo passo de maior retorno
 
-A cadeia até `World*` já está fechada. O gargalo agora é resolver **o jogador local de forma semântica e estável**:
+Repetir o teste com o humano em Player 2 depois de o mapa estar completamente carregado e confirmar:
 
-1. entender o layout exato das entradas de 8 bytes de `mPlayers`;
-2. localizar onde Gaia/humano/IA são distinguidos;
-3. relacionar `mLocalPlayerIndex` à entrada correta;
-4. mapear recursos do jogador local (Food/Wood/Gold/Stone) como próxima validação forte.
+~~~text
+World+0x174
+mPlayers[localIndex].object
+player+0x04
+player+0x08
+RTTI/vtable da entry local
+~~~
 
-## Regra de documentação
+Se isso fechar, GetLocalPlayer() fica validado em runtime. Depois: Food/Wood/Gold/Stone.
 
-Toda descoberta é classificada como:
+## Documentação
 
-- ✅ **Confirmado** — provado pelo assembly, RTTI ou validação runtime;
-- 🟢 **Muito provável** — evidência estrutural/semântica forte;
-- 🟡 **Hipótese** — plausível, mas ainda precisa de validação;
-- 🔴 **Descartado** — hipótese testada e incompatível com o binário.
-
-O projeto evita hardcodes prematuros. A abordagem preferida é:
-
-```text
-RTTI / função
-      ↓
-objeto
-      ↓
-estrutura
-      ↓
-relações
-      ↓
-validação runtime
-      ↓
-assinatura/padrão estável
-```
-
-## Estrutura do repositório
-
-```text
-AoE2HDControl/
-├─ README.md
-└─ docs/
-   ├─ reverse-engineering.md
-   ├─ functions.md
-   ├─ structures.md
-   └─ roadmap.md
-```
-
-As pastas de código serão adicionadas quando as estruturas principais estiverem suficientemente validadas para uma primeira implementação segura de `GetWorld()` e `GetLocalPlayer()`.
+- docs/reverse-engineering.md
+- docs/functions.md
+- docs/structures.md
+- docs/roadmap.md
