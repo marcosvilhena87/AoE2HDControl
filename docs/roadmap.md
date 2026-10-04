@@ -191,6 +191,32 @@ Investigar `RGE_Command` e `TRIBE_Command` somente após a leitura de estado/jog
 - validação RTTI/vtable;
 - falha segura em build desconhecido.
 
+## Referência conceitual — AoE2Control / Definitive Edition
+
+Status: 🟢 incorporada como guia semântico.
+
+O AoE2Control é usado apenas para responder:
+
+~~~text
+quais conceitos uma API madura de controle precisa expor?
+~~~
+
+Exemplos de alvos inspirados por essa referência:
+
+~~~text
+player id / color
+resources / population
+object id / owner / type / position / HP
+map tiles / terrain / elevation / passability
+pathfinding / placement
+commands
+IPC / external agent
+~~~
+
+Nenhum offset, stride, vtable ou layout do AoE2:DE deve ser usado como evidência para o HD.
+
+Detalhes: `docs/aoe2control-reference.md`.
+
 ## Ordem atual recomendada
 
 ~~~text
