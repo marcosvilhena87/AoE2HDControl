@@ -14,82 +14,50 @@
 - SHA-256 registrado: `CBD10D81B93601FFB26773D250B7478969DA92D70792A40AE423294202E14650`
 - PDB referenciado: `AoK HD.pdb`
 
-O binário apresenta fortes evidências de código C++ com métodos de instância, tabelas de ponteiros e RTTI/strings úteis para reconstrução semântica.
+O binário apresenta fortes evidências de C++ MSVC com RTTI, herança, métodos `__thiscall` e vtables.
 
-## Convenção importante
+## Convenção x86 importante
 
-No MSVC/x86, métodos de instância normalmente usam `__thiscall`, portanto:
+Em métodos de instância MSVC/x86:
 
 ```text
 ECX = this
 ```
 
-Esse padrão já foi observado nas funções centrais investigadas.
+Esse padrão foi observado nas funções centrais investigadas.
 
-## FUN_00735A00
+---
 
-Endereço:
+## Classe World — identificação confirmada
 
-```text
-0x00735A00
-```
-
-A função salva o objeto recebido em `ECX` em uma variável local, o que sustenta a interpretação de método C++.
-
-Campos relevantes acessados:
+A análise de RTTI identifica a classe:
 
 ```text
-this + 0x174
-this + 0x184
-this + 0x188
+World
+  ↓ herda de
+BaseWorld
 ```
 
-### +0x174
-
-Esse campo aparece associado semanticamente à string/expressão:
+A vtable de `World` começa em:
 
 ```text
-mLocalPlayerIndex.raw()
+0x009D329C
 ```
 
-Hipótese atual:
-
-```cpp
-// +0x174
-PlayerIndex mLocalPlayerIndex;
-```
-
-Estado: 🟢 muito provável.
-
-### +0x184 e +0x188
-
-Os dois valores são tratados como delimitadores de uma coleção contínua:
-
-```cpp
-begin = *(void**)(this + 0x184);
-end   = *(void**)(this + 0x188);
-count = (end - begin) / 8;
-```
-
-O stride observado é de 8 bytes.
-
-Interpretação provisória:
-
-```cpp
-// +0x184
-PlayerEntry* mPlayersBegin;
-
-// +0x188
-PlayerEntry* mPlayersEnd;
-```
+Foram observados 37 ponteiros de função nessa tabela.
 
 Estado:
 
-- delimitadores de coleção: ✅ confirmado;
-- associação com `mPlayers`: 🟢 muito provável;
-- tipo exato de `PlayerEntry`: 🟡 hipótese.
+- classe `World`: ✅ confirmado por RTTI;
+- herança `World : BaseWorld`: ✅ confirmada por RTTI;
+- início da vtable de `World`: ✅ `0x009D329C`;
+- total observado: ✅ 37 slots.
 
-## FUN_00697800
+Isso substitui a antiga hipótese `UnknownWorldLike`.
+
+---
+
+## FUN_00697800 — método virtual de World
 
 Endereço:
 
@@ -97,85 +65,197 @@ Endereço:
 0x00697800
 ```
 
-Também salva `ECX` como objeto local, compatível com método C++.
-
-Há uma chamada para `FUN_00735A00` na região:
+`FUN_00697800` aparece na vtable de `World` no:
 
 ```text
-0x006979F7
+índice 33
+offset da vtable = 33 * 4 = 0x84
 ```
 
-Fluxo:
+Logo:
 
 ```text
-FUN_00697800
-    ↓
-0x006979F7
-    ↓
-FUN_00735A00
+World::vtable + 0x84 → FUN_00697800
 ```
 
-O principal ponto ainda não resolvido é determinar exatamente qual valor está em `ECX` no call site.
+Estado: ✅ método virtual de `World`.
 
-## XREFs e tabela de funções
-
-`FUN_00697800` é referenciada em:
+Dentro de `FUN_00697800` há chamada para:
 
 ```text
-0x009D3320
+0x006979F7 → FUN_00735A00
 ```
 
-Esse endereço pertence a uma região com vários ponteiros consecutivos para funções:
+A análise do fluxo indica que `FUN_00697800` e `FUN_00735A00` operam sobre o mesmo objeto `World`.
+
+---
+
+## FUN_00735A00 — método relacionado a estado/jogadores
+
+Endereço:
 
 ```text
-0x009D32F0
-...
-0x009D3320 → FUN_00697800
-...
-0x009D332C
+0x00735A00
 ```
 
-A região é compatível com uma vtable, mas isso ainda não está confirmado.
+Recebe `this` em `ECX`, compatível com método C++.
 
-Alternativas possíveis:
+Campos relevantes:
 
-- vtable;
-- dispatch table;
-- callback table;
-- interface table;
-- array estático de handlers.
+```text
+World + 0x174
+World + 0x184
+World + 0x188
+```
 
-Estado: 🟡 hipótese.
+### World + 0x174
 
-## Hipótese de estrutura atual
+A semântica observada está associada a:
+
+```text
+mLocalPlayerIndex.raw()
+```
+
+Modelo atual:
 
 ```cpp
-struct UnknownWorldLike
-{
-    void* vtable; // ainda não confirmado
+// World + 0x174
+PlayerIndex mLocalPlayerIndex;
+```
 
+Estado: 🟢 muito provável.
+
+### World + 0x184 / +0x188
+
+Os dois campos delimitam uma coleção contínua:
+
+```cpp
+begin = *(void**)(world + 0x184);
+end   = *(void**)(world + 0x188);
+count = (end - begin) / 8;
+```
+
+Stride observado:
+
+```text
+8 bytes
+```
+
+Interpretação atual:
+
+```cpp
+// World + 0x184
+PlayerEntry* mPlayersBegin;
+
+// World + 0x188
+PlayerEntry* mPlayersEnd;
+```
+
+Estado:
+
+- delimitadores de coleção: ✅ confirmado;
+- coleção relacionada a jogadores / `mPlayers`: 🟢 muito provável;
+- formato exato de cada elemento de 8 bytes: 🟡 ainda aberto.
+
+### World + 0x18C
+
+Ainda não validado.
+
+Se a estrutura for semelhante a um `std::vector` MSVC clássico, `+0x18C` pode representar `capacity/end-of-storage`, mas isso permanece hipótese.
+
+Estado: 🟡.
+
+---
+
+## Tamanho e construção de World
+
+Foi localizado um caminho de criação de `World` na função que contém a região `0x0062E65A`.
+
+Fluxo observado:
+
+```text
+operator_new(0x2DC)
+        ↓
+memset(...)
+        ↓
+FUN_006889B0
+        ↓
+World construído
+```
+
+Portanto, o tamanho alocado observado para a instância é:
+
+```text
+sizeof(World) observado = 0x2DC bytes = 732 bytes
+```
+
+`FUN_006889B0` é o forte candidato a construtor/inicializador principal de `World`.
+
+Estado:
+
+- alocação de `0x2DC`: ✅ confirmada;
+- `FUN_006889B0` recebe o bloco recém-alocado para inicialização: ✅ confirmado;
+- nome semântico `World::World`: 🟢 muito provável, pendente de caracterização completa do prólogo/RTTI/vtable write.
+
+---
+
+## Owner de World — campo +0xC8
+
+Na rotina de criação/substituição foi observado um objeto aqui chamado provisoriamente de `owner` / `local_20`.
+
+O novo `World*` é armazenado em:
+
+```text
+owner + 0xC8
+```
+
+Modelo:
+
+```cpp
+struct UnknownOwner {
     // ...
-
-    // +0x174
-    PlayerIndex mLocalPlayerIndex;
-
-    // ...
-
-    // +0x184
-    PlayerEntry* mPlayersBegin;
-
-    // +0x188
-    PlayerEntry* mPlayersEnd;
-
-    // +0x18C possivelmente capacity/end-of-storage
+    World* world; // +0xC8
 };
 ```
 
-O campo `+0x18C` ainda precisa ser inspecionado. Caso a coleção seja um `std::vector` clássico de MSVC, o trio esperado seria begin/end/capacity, mas isso é somente hipótese.
+Ao substituir o ponteiro anterior, o objeto antigo é destruído por chamada virtual usando o primeiro slot de sua vtable, compatível com deleting destructor/destruição polimórfica.
+
+Estado:
+
+- `[owner + 0xC8] = World*`: ✅ confirmado no caminho observado;
+- identidade/classe do `owner`: 🟡 desconhecida;
+- destruição do World antigo via slot virtual 0: 🟢 fortemente sustentada pelo fluxo.
+
+Essa cadeia é hoje uma das pistas de maior valor para obter a instância global/ativa de `World`.
+
+---
+
+## Relação estrutural atual
+
+```text
+UnknownOwner
+    │
+    └── +0xC8 ─────► World (0x2DC bytes)
+                       │
+                       ├── vtable 0x009D329C
+                       │      └── slot 33 / +0x84
+                       │             └── FUN_00697800
+                       │                    └── 0x006979F7
+                       │                           └── FUN_00735A00
+                       │
+                       ├── +0x174  mLocalPlayerIndex
+                       ├── +0x184  mPlayers begin
+                       ├── +0x188  mPlayers end
+                       └── +0x18C  ? capacity/end-of-storage
+```
+
+Essa é a espinha dorsal atualmente conhecida.
+
+---
 
 ## ASLR / RVA
 
-Os endereços do Ghidra são baseados em:
+Os endereços do Ghidra usam:
 
 ```text
 ImageBase = 0x00400000
@@ -195,11 +275,13 @@ Em runtime:
 runtimeAddress = moduleBase + RVA;
 ```
 
-Não devemos depender de endereços absolutos quando começarmos a instrumentação runtime.
+Não depender de endereços absolutos na futura instrumentação.
 
-## Evidências de arquitetura interna
+---
 
-Foram observados nomes e conceitos compatíveis com a arquitetura original do jogo, incluindo referências relacionadas a:
+## Pistas semânticas adicionais
+
+Foram observados conceitos/nomenclaturas compatíveis com a arquitetura original:
 
 ```text
 World
@@ -210,7 +292,7 @@ TRIBE_Command
 PathingSystem
 ```
 
-Também apareceram nomes relacionados a arquivos-fonte como:
+Também surgiram referências relacionadas a fontes como:
 
 ```text
 world.cpp
@@ -219,38 +301,72 @@ path.cpp
 move_obj.cpp
 ```
 
-Essas pistas reforçam a estratégia:
+Estratégia útil:
 
 ```text
-strings
-  ↓
-asserts/debug strings
-  ↓
-funções
-  ↓
-classes
-  ↓
-estruturas
+RTTI / strings / asserts
+          ↓
+       funções
+          ↓
+       classes
+          ↓
+      estruturas
+          ↓
+ relações entre objetos
 ```
 
-## Pergunta central atual
+---
 
-> Qual é exatamente a classe representada pelo `this` usado em `FUN_00735A00` e `FUN_00697800`?
+## Pendências conhecidas
 
-Responder isso provavelmente destrava o mapeamento de World/GameState, Player e recursos.
+### FUN_00659750
 
-## Próximas validações
+A função já foi aberta no Ghidra e apresenta variáveis locais como `local_8`, `local_10` e `local_14`, mas ainda não existe evidência suficiente para atribuir semântica confiável.
 
-1. Mapear completamente `0x009D3280–0x009D3330`.
-2. Determinar o início real da possível tabela de funções.
-3. Procurar XREFs para o início da tabela.
-4. Encontrar código que grave o endereço da tabela em `[this]` para localizar o provável construtor.
-5. Reconstruir o contexto de `0x006979F7` e determinar `ECX`.
-6. Buscar todos os usos de `+0x174`, `+0x184` e `+0x188`.
-7. Inspecionar `+0x18C`.
-8. Descobrir a composição exata dos elementos de 8 bytes de `mPlayers`.
+Regra: não nomear nem conectar essa função ao modelo principal até existir evidência estrutural.
 
-## Regra operacional
+### PlayerEntry
+
+Stride confirmado em 8 bytes, composição ainda desconhecida.
+
+Não assumir prematuramente que seja apenas `Player*`.
+
+---
+
+## Próximo passo de maior retorno
+
+Seguir a cadeia do `owner`.
+
+Na função que contém a criação/substituição de `World` e a região `0x0062E65A`:
+
+> identificar a primeira escrita/atribuição que define `local_20` (o `owner`).
+
+Objetivo:
+
+```text
+origem do owner
+      ↓
+owner + 0xC8
+      ↓
+World*
+```
+
+Se `owner` vier de global, singleton ou estrutura raiz estável, isso pode produzir a primeira cadeia runtime robusta para:
+
+```cpp
+World* GetWorld();
+```
+
+Depois disso:
+
+1. validar `World+0x174` em runtime;
+2. decodificar os elementos de `World+0x184/+0x188`;
+3. resolver `Player*` do jogador local;
+4. usar recursos como Food/Wood/Gold/Stone como validação.
+
+---
+
+## Regra de documentação
 
 Para cada descoberta registrar:
 
@@ -259,9 +375,17 @@ Endereço
 Função
 Assembly relevante
 Pseudocódigo
+Objeto this
 Offset
 Significado provável
 Evidência
 Nível de confiança
 Próxima validação
 ```
+
+Classificação:
+
+- ✅ Confirmado
+- 🟢 Muito provável
+- 🟡 Hipótese
+- 🔴 Descartado
