@@ -4,169 +4,126 @@
 
 ## FUN_006889B0
 
-- Endereço: `0x006889B0`
-- Papel: construtor/inicializador estrutural de `World`
-- Convenção: `ECX = this`
-- Evidência principal:
+Endereço: 0x006889B0.
 
-```asm
+Papel: construtor/inicializador estrutural de World.
+
+~~~asm
 006889D6  MOV ESI,ECX
 006889DE  CALL FUN_00729360
 006889F1  MOV dword ptr [ESI],009D329C
-```
+~~~
 
-- Contexto de criação:
-  - chamada após `operator_new(0x2DC)`;
-  - bloco zerado com `memset(...,0,0x2DC)`;
-  - instala a vtable confirmada de `World`.
-- Confiança:
-  - inicialização de uma instância de `World`: ✅
-  - nome-fonte/overload exato do construtor: 🟡
+Estado: ✅.
 
 ## FUN_00697800
 
-- Endereço: `0x00697800`
-- Classe: `World`
-- Convenção: `__thiscall` compatível
-- `this`: `World*` em `ECX`
-- Vtable:
-  - início: `0x009D329C`
-  - índice: `33`
-  - offset: `+0x84`
-- Call site:
-  - `0x006979F7 → FUN_00735A00`
-- Estado: ✅ método virtual de `World`
+- Endereço: 0x00697800
+- Classe: World
+- Vtable: slot 33 / +0x84
+- Chama FUN_00735A00 em 0x006979F7
+- Mesmo World* em ECX
+
+Estado: ✅.
 
 ## FUN_00735A00
 
-- Endereço: `0x00735A00`
-- `this`: `World*`
-- Prólogo salva `ECX` em `local_c0`
-- Campos mapeados:
-  - `+0x174 → mLocalPlayerIndex`
-  - `+0x184 → mPlayers.begin`
-  - `+0x188 → mPlayers.end`
-- Evidência:
-  - string/assert `mLocalPlayerIndex.raw()`;
-  - cálculo de tamanho da coleção com stride 8;
-  - validação runtime de índice local e quantidade de players.
-- Confiança: ✅ para os offsets acima.
+- Endereço: 0x00735A00
+- this = World*
+- +0x174 → mLocalPlayerIndex
+- +0x184 → mPlayers.begin
+- +0x188 → mPlayers.end
+
+Estado: ✅.
 
 ## FUN_0062E5D0
 
-- Endereço: `0x0062E5D0`
-- `this`: objeto owner/root ainda sem nome de classe
-- Prólogo:
+- Endereço: 0x0062E5D0
+- this = Owner*
 
-```asm
+~~~asm
 0062E5FA  MOV [EBP + local_20],ECX
-```
+~~~
 
-Logo:
+Cria World e instala o ponteiro em Owner+0xC8.
 
-```text
-local_20 = Owner*
-```
-
-- Cria `World`:
-  - `operator_new(0x2DC)`
-  - `memset`
-  - `FUN_006889B0`
-- Armazena o novo ponteiro em:
-
-```text
-Owner + 0xC8
-```
-
-Trecho:
-
-```asm
-0062E671  MOV EAX,[EBP + local_20]
-0062E674  ADD EAX,0xC8
-...
-0062E68B  MOV [EAX],ECX
-```
-
-- Se houver objeto antigo, chama slot virtual 0 com argumento `1`.
-- Confiança:
-  - `Owner+0xC8 → World*`: ✅
-  - semântica exata da função (new game/load/create session): 🟡
+Estado: ✅ para a relação estrutural.
 
 ## FUN_00659750
 
-- Endereço: `0x00659750`
-- Importância: caller que revela a origem global do `Owner*`
-
-Trecho:
-
-```asm
+~~~asm
 0065979D  MOV ECX,[DAT_00AF2C58]
-006597A3  PUSH 0x1
-006597A5  PUSH EAX
 006597A8  CALL FUN_0062E5D0
-```
+~~~
 
-Conclusão:
+Conclusão: [DAT_00AF2C58] = Owner*.
 
-```text
-[DAT_00AF2C58] = Owner*
-```
+Estado: ✅.
 
-Estado: ✅ para essa cadeia de chamada.
+## WorldPlayerGaia
 
-## FUN_00758C90 / vtable 0x009DC8A0
+Vtable estática: 0x009DC8A0.
 
-A vtable estática em:
+~~~text
+vtable[-1]     = 0x00A23F58
+TypeDescriptor = 0x00ACBAF4
+RTTI name      = WorldPlayerGaia
+slot 0         = FUN_00758C90
+~~~
 
-```text
-0x009DC8A0
-```
+Runtime observado: 0x18AA701C → vtable 0x0136C8A0.
 
-tem:
+Estado: ✅.
 
-```text
-slot 0 → FUN_00758C90
-slot 1 → FUN_00748A40
-```
+## WorldPlayerHumanOrCoop
 
-Seu RTTI Complete Object Locator está em:
+Vtable estática: 0x009DCAE4.
 
-```text
-0x00A23F58
-```
+~~~text
+vtable[-1]     = 0x00A23FA8
+TypeDescriptor = 0x00ACBB14
+RTTI name      = WorldPlayerHumanOrCoop
+~~~
 
-e o TypeDescriptor resolve para:
+Runtime observado: 0x146EF234 → vtable 0x0136CAE4.
 
-```text
-.?AVWorldPlayerGaia@@
-```
+Estado: ✅.
 
-Estado: ✅ vtable associada por RTTI a `WorldPlayerGaia`.
+## WorldPlayerComputer
 
-Observação runtime importante: os três objetos apontados pelas três entradas observadas de `mPlayers` apresentaram essa mesma vtable primária. A razão/semântica ainda está aberta; não classificar entry[1]/entry[2] como Human/Computer apenas pela posição.
+Vtable estática: 0x009DC618.
+
+~~~text
+vtable[-1]     = 0x00A23B44
+TypeDescriptor = 0x00ACB750
+RTTI name      = WorldPlayerComputer
+slot 0         = FUN_00755A40
+~~~
+
+Runtime observado: 0x18B1F09C → vtable 0x0136C618.
+
+Estado: ✅.
 
 ## FUN_00729360
 
-- Chamada no início de `FUN_006889B0`, antes da escrita da vtable de `World`.
-- Hipótese: inicializador/construtor da base `BaseWorld` ou rotina relacionada.
-- Confiança: 🟡 até mapear RTTI/vtable writes internos.
+Chamada no início de FUN_006889B0 antes da escrita da vtable de World.
 
-## Modelo para novas funções
+Hipótese: inicializador/construtor de BaseWorld.
 
-```text
-Nome:
-Endereço:
-Classe:
-Convenção:
-this:
-Vtable slot:
-Callers:
-Callees:
-Offsets acessados:
-Strings/RTTI associados:
-Assembly-chave:
-Pseudocódigo:
-Hipótese:
-Confiança:
-Próxima validação:
-```
+Confiança: 🟡.
+
+## Nota de lifecycle
+
+Uma nova instância de World pode já possuir a vtable correta antes de mLocalPlayerIndex e mPlayers estarem prontos para leitura de gameplay.
+
+A futura API deve separar:
+
+~~~text
+World pointer válido
+~~~
+
+de:
+
+~~~text
+World gameplay-ready
+~~~
