@@ -1,6 +1,6 @@
 # Roadmap
 
-Última atualização: 2026-10-06.
+Última atualização: 2026-10-07.
 
 ## Marco 1 — cadeia estável até World
 
@@ -121,21 +121,25 @@ Pendente apenas nomear com maior precisão o objeto/contexto de lobby usado como
 
 ## Marco 5 — readiness / lifecycle
 
-Status: 🟡 requisito conhecido.
+Status: 🟡 avançado; a fronteira estrutural está bem mapeada, faltando a fronteira semântica.
 
-É necessário distinguir:
-
-~~~text
-World pointer válido
-~~~
-
-de:
+Já confirmado:
 
 ~~~text
-World completamente inicializado para gameplay
+0x0062E68B publica Owner+0xC8 = World*
+0x0062E73A pode fazer rollback para nullptr
+FUN_0072C6E0 pode esvaziar mPlayers mantendo capacidade
+FUN_0072F7D0 limpa e redimensiona mPlayers
+FUN_007288B0 implementa resize-like do vetor de stride 8
 ~~~
 
-Além disso, `World`, `mPlayers` e `WorldPlayer*` podem ser recriados entre estados.
+Portanto:
+
+~~~text
+World pointer válido != gameplay-ready
+begin != nullptr != vetor não vazio
+size > 0 != necessariamente PlayerEntry.object válido
+~~~
 
 Meta:
 
@@ -144,6 +148,32 @@ bool IsWorldReady(const World*);
 ~~~
 
 e política de não cachear ponteiros derivados por longo prazo.
+
+Critério estrutural provisório:
+
+~~~text
+World != nullptr
+vtable correta
+mPlayers begin/end coerentes
+2 <= size <= 9
+0 <= localPlayerIndex < size
+~~~
+
+Checks semânticos desejados:
+
+~~~text
+mPlayers[0] → Gaia
+mPlayers[localPlayerIndex] → HumanOrCoop
+~~~
+
+Experimento atual:
+
+~~~text
+breakpoint estático 0x0072FA04
+logo após 0x0072F9FF CALL FUN_007288B0
+~~~
+
+Objetivo: verificar se os slots já contêm `WorldPlayer*` válidos logo após o resize.
 
 ## Marco 6 — jogador local
 
@@ -232,11 +262,12 @@ Detalhes: `docs/aoe2control-reference.md`.
 ## Ordem atual recomendada
 
 ~~~text
-1. consolidar IsWorldReady()
-2. fechar GetLocalPlayer() como API
-3. mapear Food/Wood/Gold/Stone
-4. mapear objetos/unidades
-5. mapear comandos
-6. trocar RVAs críticos por signatures
-7. implementar HDAdapter
+1. breakpoint 0x0072FA04 e fechar fronteira slots vazios → players válidos
+2. consolidar IsWorldReady()
+3. fechar GetLocalPlayer() como API
+4. mapear Food/Wood/Gold/Stone
+5. mapear objetos/unidades
+6. mapear comandos
+7. trocar RVAs críticos por signatures
+8. implementar HDAdapter
 ~~~
