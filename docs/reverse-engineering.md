@@ -1,6 +1,6 @@
 # Engenharia reversa — estado consolidado
 
-Última atualização: 2026-10-06.
+Última atualização: 2026-10-07.
 
 ## Alvo
 
@@ -67,6 +67,30 @@ Na execução com base `0x00410000`:
 
 ~~~text
 Owner global runtime = 0x00B02C58
+~~~
+
+## Publicação e rollback de World
+
+`FUN_0062E5D0` aloca `0x2DC`, chama `FUN_006889B0` e publica o novo ponteiro em:
+
+~~~text
+0x0062E68B → Owner+0xC8 = novo World*
+~~~
+
+Depois da publicação ocorre chamada virtual pelo slot `World.vtable+0x04`, cujo alvo é `FUN_0072D1A0`.
+
+Existe também caminho de rollback:
+
+~~~text
+0x0062E73A → Owner+0xC8 = nullptr
+~~~
+
+Logo:
+
+~~~text
+Owner->world != nullptr
+≠
+World gameplay-ready
 ~~~
 
 ## World + 0x174
@@ -148,11 +172,91 @@ Em todas:
 object = controlBlock + 0x0C
 ~~~
 
-RTTI também contém `_Ref_count_obj<...>` para os tipos concretos, reforçando fortemente:
+RTTI contém `_Ref_count_obj<...>` para os tipos concretos.
+
+O código fecha ainda mais a interpretação:
 
 ~~~text
-mPlayers ≈ std::vector<std::shared_ptr<WorldPlayer>>
+FUN_00430160
+  entry stride = 8
+  entry+0x4 = controlBlock
+  controlBlock+0x4 = strong count
+  controlBlock+0x8 = weak count
 ~~~
+
+Logo:
+
+~~~text
+mPlayers = std::vector<std::shared_ptr<WorldPlayer>>
+~~~
+
+## Operações internas de mPlayers
+
+### FUN_00430DD0 — destruição do vetor
+
+Com `ECX=&mPlayers`:
+
+~~~text
+destroy [begin,end)
+free buffer
+begin = 0
+end = 0
+capacityEnd = 0
+~~~
+
+### FUN_0072C6E0 — clear/reset preservando capacidade
+
+A rotina percorre os `WorldPlayer*`, chama cleanup por entry, destrói os shared_ptrs e faz:
+
+~~~text
+end = begin
+~~~
+
+Portanto pode existir:
+
+~~~text
+begin != nullptr
+end == begin
+capacityEnd != nullptr
+~~~
+
+### FUN_007288B0 — resize-like
+
+Confirma:
+
+~~~text
+size     = (end - begin) / 8
+capacity = (capacityEnd - begin) / 8
+~~~
+
+e implementa:
+
+~~~text
+newSize > capacity
+  → realoca
+  → capacity nova ≈ max(newSize, capacity + capacity/2)
+
+size < newSize <= capacity
+  → constrói cauda
+
+newSize < size
+  → destrói cauda
+~~~
+
+### FUN_0072F7D0 — clear + resize
+
+Fluxo relevante:
+
+~~~text
+mPlayers.clear()
+→ calcula newSize
+→ FUN_007288B0(&mPlayers, newSize, ...)
+→ continua inicialização
+~~~
+
+Também manipula `World+0x174`.
+
+Ainda não está fechado se, logo após o resize, as entries já contêm `WorldPlayer*` válidos ou apenas slots inicializados.
 
 ## Hierarquia WorldPlayer
 
@@ -547,12 +651,58 @@ não cachear WorldPlayer* indefinidamente
 resolver a cadeia novamente após mudança de partida/setup
 ~~~
 
-## Próximo passo de maior retorno
+## Readiness — estado atual
 
-O campo “Jog.” está fechado. Próximos alvos:
+Critério estrutural conservador:
 
 ~~~text
-1. consolidar readiness/lifecycle
+World != nullptr
+vtable correta
+mPlayers begin/end coerentes
+2 <= size <= 9
+0 <= mLocalPlayerIndex < size
+~~~
+
+Checks semânticos desejados:
+
+~~~text
+mPlayers[0] → Gaia
+mPlayers[mLocalPlayerIndex] → HumanOrCoop
+~~~
+
+Mas `size > 0` ainda não garante que os `PlayerEntry.object` já estejam preenchidos.
+
+## Próximo experimento
+
+Breakpoint estático:
+
+~~~text
+0x0072FA04
+~~~
+
+É logo após:
+
+~~~text
+0x0072F9FF CALL FUN_007288B0
+~~~
+
+Ao parar, inspecionar:
+
+~~~text
+EDI = World*
+[EDI+174]
+[EDI+184]
+[EDI+188]
+[EDI+18C]
+entries em [[EDI+184]]
+~~~
+
+Objetivo: descobrir se o resize já cria shared_ptrs válidos ou apenas slots vazios.
+
+Depois:
+
+~~~text
+1. consolidar IsWorldReady()
 2. fechar GetLocalPlayer() como API pública
 3. mapear Food/Wood/Gold/Stone
 ~~~
