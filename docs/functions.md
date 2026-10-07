@@ -1,6 +1,6 @@
 # Funções mapeadas
 
-Última atualização: 2026-10-04.
+Última atualização: 2026-10-06.
 
 ## Convenção de endereços
 
@@ -254,6 +254,147 @@ Validação dinâmica:
 ~~~
 
 Estado: ✅.
+
+## FUN_00615A30 — SetPlayerNumberIndex
+
+Endereço estático: `0x00615A30`.
+Runtime observado com `moduleBase=0x00D80000`: `0x00F95A30`.
+
+~~~asm
+00615A30  PUSH EBP
+00615A31  MOV  EBP,ESP
+00615A33  MOV  EAX,[EBP+8]
+00615A36  MOV  [ECX+4C],EAX
+00615A39  POP  EBP
+00615A3A  RET  4
+~~~
+
+Interpretação:
+
+~~~cpp
+void ResolvedPlayerConfig::SetPlayerNumberIndex(int value) {
+    this->playerNumberIndex = value; // +0x4C
+}
+~~~
+
+Validação dinâmica:
+
+~~~text
+Jog.1 → 0
+Jog.2 → 1
+Jog.3 → 2
+~~~
+
+Estado: ✅.
+
+## FUN_00658E40 — ApplyPlayerNumberSelection
+
+Endereço estático: `0x00658E40`.
+
+Recebe o índice da configuração/linha como primeiro argumento. O fluxo confirmado resolve a seleção feita no controle da UI e, no caminho normal observado, resolve `ResolvedPlayerConfig[configIndex]` e chama `FUN_00615A30`.
+
+Trecho-chave:
+
+~~~asm
+00658E6D  MOV  EDI,[EBP+8]       ; configIndex
+00658E78  IMUL ESI,EDI,70h
+...
+00658EE4  IMUL EAX,EDI,68h
+00658EE7  ADD  EAX,B0h
+00658EEC  ADD  ECX,EAX
+00658EEE  CALL FUN_00615A30
+~~~
+
+Nome semântico provisório, mas o papel na cadeia de “Jog.” está confirmado.
+
+Estado: ✅ estrutural / 🟡 para nomes dos objetos auxiliares.
+
+## FUN_00644C10 — CreatePlayerNumberCallback
+
+Endereço estático: `0x00644C10`.
+
+Aloca `0x0C` bytes e constrói um callback:
+
+~~~asm
+00644C3B  PUSH 0Ch
+00644C3D  CALL operator_new
+...
+00644C51  MOV [EDX],009D1128
+00644C57  MOV ECX,[EBP+8]
+00644C5A  MOV EAX,[ECX]
+00644C5C  MOV [EDX+4],EAX
+00644C5F  MOV EAX,[ECX+4]
+00644C62  MOV [EDX+8],EAX
+~~~
+
+Modelo:
+
+~~~cpp
+struct PlayerNumberCallback {
+    void** vtable;       // +0x00 = 0x009D1128
+    void* target;        // +0x04
+    int32_t configIndex; // +0x08
+};
+~~~
+
+Estado: ✅.
+
+## LAB_00653CD0 — callback thunk
+
+Entrada virtual da vtable `0x009D1128`.
+
+~~~asm
+00653CD0  MOV EAX,[ECX+8]
+00653CD3  PUSH ECX
+00653CD4  MOV EDX,ESP
+00653CD6  MOV [EDX],EAX
+00653CD8  MOV ECX,[ECX+4]
+00653CDB  CALL FUN_00658E40
+00653CE0  RET
+~~~
+
+Equivalente aproximado:
+
+~~~cpp
+void PlayerNumberCallback::Invoke() {
+    target->ApplyPlayerNumberSelection(configIndex);
+}
+~~~
+
+Estado: ✅.
+
+## FUN_0064F0E0 — construtor/configurador da UI de 8 linhas
+
+Endereço estático: `0x0064F0E0`.
+
+A função contém um loop explícito de oito entradas:
+
+~~~asm
+006500F3  XOR ESI,ESI
+00650131  IMUL EAX,ESI,70h
+00650139  ADD EAX,EDI
+...
+0065011F  MOV [EBP+local_1BC],EDI
+...
+0065091B  MOV [EBP+local_1B8],ESI
+00650936  LEA EAX,[EBP+local_1BC]
+0065093D  CALL FUN_00644C10
+...
+00651506  INC ESI
+0065150D  CMP ESI,08
+00651510  JC 00650131
+~~~
+
+Conclusões:
+
+~~~text
+ESI = configIndex = 0..7
+linha/config UI usa stride 0x70
+callback.target = EDI
+callback.configIndex = ESI
+~~~
+
+Estado: ✅ para o loop e vínculo `configIndex → callback`; 🟡 para o nome semântico exato do objeto em EDI.
 
 ## FUN_00593640
 
