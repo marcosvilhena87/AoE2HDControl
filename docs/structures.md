@@ -1,6 +1,6 @@
 # Estruturas provisórias
 
-Última atualização: 2026-10-04.
+Última atualização: 2026-10-06.
 
 ## World
 
@@ -190,7 +190,7 @@ struct ResolvedPlayerConfig
 {
     // ...
 
-    int32_t configIndexLike;    // +0x4C, padrão 0..7 observado; nome provisório
+    int32_t playerNumberIndex;  // +0x4C, confirmado; zero-based para “Jog.” 1..8
     int32_t worldPlayerIndex;   // +0x50, confirmado
     int32_t humanity;           // +0x54, confirmado
 
@@ -221,7 +221,52 @@ ResolvedPlayerConfig* ResolveSlotConfig(SlotRecord* slot)
 | 6 | -1 | 1 | sem WorldPlayer |
 | 7 | -1 | 1 | sem WorldPlayer |
 
+`playerNumberIndex` foi validado dinamicamente mantendo a mesma linha/configuração e alterando somente a coluna visual:
+
+~~~text
+Jog.1 → 0
+Jog.2 → 1
+Jog.3 → 2
+~~~
+
+Logo, a representação é zero-based e o domínio esperado para `Jog.1..8` é `0..7`.
+
 `humanity=3` ainda não observado diretamente.
+
+## UI do lobby e callback de número do jogador
+
+`FUN_0064F0E0` itera explicitamente oito configurações:
+
+~~~asm
+006500F3  XOR  ESI,ESI
+...
+00650131  IMUL EAX,ESI,70h
+00650139  ADD  EAX,EDI
+...
+00651506  INC  ESI
+0065150D  CMP  ESI,08
+00651510  JC   00650131
+~~~
+
+Portanto:
+
+~~~text
+configIndex = 0..7
+row/config UI = lobbyBase + configIndex * 0x70
+~~~
+
+Estrutura confirmada do callback criado por `FUN_00644C10`:
+
+~~~cpp
+struct PlayerNumberCallback
+{
+    void** vtable;          // +0x00 = 0x009D1128
+    void* target;           // +0x04 = objeto/contexto do lobby
+    int32_t configIndex;    // +0x08 = 0..7
+}; // 0x0C
+~~~
+
+O thunk virtual em `0x00653CD0` lê `+0x08`, usa `+0x04` como `this` e chama `FUN_00658E40(configIndex)`.
 
 ## Relação configuração → World
 
@@ -281,7 +326,7 @@ WorldPlayer* GetLocalPlayer(World* world)
 }
 ~~~
 
-A relação é forte, mas a coluna visual **“Jog.”** do lobby é outra coisa e ainda precisa ser localizada.
+A relação é forte. A coluna visual **“Jog.”** é um conceito separado e agora está localizada em `ResolvedPlayerConfig+0x4C` como `playerNumberIndex`.
 
 ## Lifecycle
 
