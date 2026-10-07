@@ -24,12 +24,17 @@ Principais descobertas confirmadas:
 - `SlotRecord` tem stride `0x28`;
 - `SlotRecord+0x18` seleciona um `ResolvedPlayerConfig`;
 - `ResolvedPlayerConfig` tem stride `0x68`;
+- `ResolvedPlayerConfig+0x4C = playerNumberIndex` (zero-based: `Jog.1→0`, `Jog.2→1`, `Jog.3→2`; esperado `0..7` para `Jog.1..8`);
 - `ResolvedPlayerConfig+0x50 = worldPlayerIndex`;
 - `ResolvedPlayerConfig+0x54 = humanity`;
 - observado: `humanity=2` para humano, `humanity=4` para computador e `humanity=1` em configs sem `WorldPlayer`;
 - `FUN_00598700` resolve `SlotRecord → World.mPlayers[worldPlayerIndex]`;
 - `FUN_00598880` aceita `humanity ∈ {2,3,4}`;
-- Gaia ocupa `World.mPlayers[0]`, mas não há evidência de um `SlotRecord` normal correspondente no lobby.
+- Gaia ocupa `World.mPlayers[0]`, mas não há evidência de um `SlotRecord` normal correspondente no lobby;
+- a UI do lobby mantém 8 linhas/configurações com stride `0x70` e `configIndex=0..7`;
+- `FUN_00615A30` escreve `ResolvedPlayerConfig+0x4C` e funciona como setter do `playerNumberIndex`;
+- `FUN_00658E40(configIndex)` aplica a seleção de “Jog.” da linha correspondente;
+- callbacks de 12 bytes usam vtable `0x009D1128`, `+0x04=target` e `+0x08=configIndex`; o thunk `00653CD0` chama `target->FUN_00658E40(configIndex)`.
 
 ## Cadeia runtime validada
 
@@ -164,18 +169,43 @@ após criação/troca de partida ou mudanças relevantes de setup
 
 Uma vtable válida, isoladamente, não garante que o `World` esteja gameplay-ready.
 
-## Próximo passo de maior retorno
+## Campo “Jog.” 1–8 fechado
 
-Localizar o campo responsável pela coluna **“Jog.” 1–8 / número-cor atribuída no lobby**, separando-o definitivamente de:
+A coluna visual do lobby foi localizada em:
 
 ~~~text
-configIndex
-worldPlayerIndex
-player+0x08
-mLocalPlayerIndex
+ResolvedPlayerConfig + 0x4C = playerNumberIndex
 ~~~
 
-Depois disso: readiness estável e recursos `Food/Wood/Gold/Stone`.
+Validação dinâmica:
+
+~~~text
+Jog.1 → 0
+Jog.2 → 1
+Jog.3 → 2
+~~~
+
+O valor é independente de `configIndex`, `worldPlayerIndex`, `player+0x08` e `mLocalPlayerIndex`.
+
+Cadeia estrutural confirmada:
+
+~~~text
+configIndex 0..7
+  ↓
+linha da UI (stride 0x70)
+  ↓
+PlayerNumberCallback { target, configIndex }
+  ↓
+FUN_00658E40(configIndex)
+  ↓
+FUN_00615A30
+  ↓
+ResolvedPlayerConfig+0x4C = playerNumberIndex
+~~~
+
+## Próximo passo de maior retorno
+
+Consolidar readiness/lifecycle e fechar `GetLocalPlayer()` como API; em seguida iniciar recursos `Food/Wood/Gold/Stone`.
 
 ## Documentação
 
