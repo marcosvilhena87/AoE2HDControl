@@ -196,9 +196,19 @@ Fluxo:
 0072FA89  MOV [EDI+174],1
 ~~~
 
-Confirma clear + resize de `mPlayers` e escrita em `mLocalPlayerIndex`. Ainda falta saber se após `0072F9FF` os slots já contêm players válidos.
+Confirma clear + resize de `mPlayers` e escrita em `mLocalPlayerIndex`.
 
-Estado: ✅ estrutural / 🟡 readiness.
+Na execução com `moduleBase=0x00D80000`, foram armados breakpoints nos três call sites conhecidos de `FUN_007288B0`:
+
+~~~text
+0x0072F9FF → runtime 0x010AF9FF
+0x00731917 → runtime 0x010B1917
+0x00732E27 → runtime 0x010B2E27
+~~~
+
+Nenhum deles disparou ao iniciar a partida testada. Portanto, embora a função e esses callers sejam estruturalmente relevantes, eles não representam necessariamente o caminho de população de `mPlayers` usado por toda transição de jogo.
+
+Estado: ✅ estrutural / 🟡 fronteira temporal de readiness.
 
 ## FUN_007288B0 — ResizePlayersVectorLike
 
@@ -636,3 +646,31 @@ A futura API deve:
 ~~~
 
 Evitar cache longo de `WorldPlayer*`.
+
+
+## Snapshot dinâmico de gameplay — moduleBase 0x00D80000
+
+Após a partida iniciar, a cadeia foi resolvida como:
+
+~~~text
+[0x01472C58] = 0x03DFE440          ; Owner*
+[0x03DFE508] = 0x18E14488          ; Owner+0xC8 = World*
+
+World+0x174 = 1
+World+0x184 = 0x14932B78
+World+0x188 = 0x14932B90
+World+0x18C = 0x14932B90
+size = 3
+~~~
+
+Players:
+
+~~~text
+0: 0x14D7070C → vtable 0x0135C8A0 → Gaia
+1: 0x147D601C → vtable 0x0135CAE4 → HumanOrCoop
+2: 0x14C8D01C → vtable 0x0135C618 → Computer
+~~~
+
+Para os três, `player+0x04 = 0x18E14488`, confirmando back-pointer para o mesmo `World`. Os valores `player+0x08` foram `2`, `1` e `3`, respectivamente.
+
+Esse snapshot fecha a validação semântica em estado gameplay-ready; resta localizar a instrução exata que aumenta `World+0x188` durante a criação da partida.
