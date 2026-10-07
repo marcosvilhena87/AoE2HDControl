@@ -233,9 +233,47 @@ mPlayers.clear()
 
 `FUN_007288B0` calcula explicitamente size/capacity por divisão por 8 e implementa os três caminhos típicos de `std::vector::resize`.
 
+### Snapshot runtime adicional — `moduleBase = 0x00D80000`
+
+Em uma partida com Gaia + humano + IA:
+
+~~~text
+Owner global runtime     = 0x01472C58
+[Owner global]           = 0x03DFE440
+Owner+0xC8               = 0x03DFE508
+[Owner+0xC8]             = 0x18E14488 = World*
+
+World+0x174              = 1
+World+0x184 begin        = 0x14932B78
+World+0x188 end          = 0x14932B90
+World+0x18C capacityEnd  = 0x14932B90
+size                     = 3
+~~~
+
+As três entries foram validadas por vtable e back-pointer:
+
+~~~text
+mPlayers[0] = 0x14D7070C → vtable 0x0135C8A0 → Gaia
+mPlayers[1] = 0x147D601C → vtable 0x0135CAE4 → HumanOrCoop
+mPlayers[2] = 0x14C8D01C → vtable 0x0135C618 → Computer
+
+[player+0x04] = 0x18E14488 para os três
+[player+0x08] = 2 / 1 / 3 respectivamente
+~~~
+
+Isso valida dinamicamente o critério semântico de readiness em gameplay:
+
+~~~text
+mPlayers[0] → Gaia
+mPlayers[mLocalPlayerIndex] → HumanOrCoop
+back-pointer player+0x04 → World atual
+~~~
+
+Os breakpoints nos três call sites conhecidos de `FUN_007288B0` (`0x0072F9FF`, `0x00731917`, `0x00732E27`) não dispararam na transição de partida testada; portanto a fronteira temporal exata que popula `mPlayers` continua aberta.
+
 ## Próximo passo de maior retorno
 
-Breakpoint estático em `0x0072FA04`, imediatamente após `0x0072F9FF CALL FUN_007288B0`, para observar se as entries já contêm `WorldPlayer*` válidos ou se ainda são slots vazios. Depois disso, consolidar `IsWorldReady()`, fechar `GetLocalPlayer()` e iniciar recursos `Food/Wood/Gold/Stone`.
+Capturar por hardware write o `World+0x188` da instância recém-criada em uma nova transição de partida, identificando a instrução que faz `mPlayers.end` crescer e, a partir dela, fechar a fronteira temporal `slots vazios → WorldPlayer* válidos`. Depois disso, consolidar `IsWorldReady()` como API e iniciar `Food/Wood/Gold/Stone`.
 
 ## Documentação
 
