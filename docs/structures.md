@@ -412,4 +412,54 @@ bool IsWorldStructurallyReady(World* w)
 }
 ~~~
 
-Ainda falta fechar quando, após o resize, os slots passam a conter `WorldPlayer*` válidos. Próximo breakpoint: `0x0072FA04`.
+### Snapshot gameplay — `moduleBase = 0x00D80000`
+
+Uma partida com Gaia + humano + IA confirmou simultaneamente toda a cadeia:
+
+~~~text
+Owner global runtime    = 0x01472C58
+Owner*                  = 0x03DFE440
+Owner+0xC8              = 0x18E14488 = World*
+
+World+0x174             = 1
+World+0x184 begin       = 0x14932B78
+World+0x188 end         = 0x14932B90
+World+0x18C capacityEnd = 0x14932B90
+size                    = 3
+~~~
+
+Entries:
+
+| índice | object | controlBlock | vtable runtime | classe | `player+0x04` | `player+0x08` |
+|---:|---:|---:|---:|---|---:|---:|
+| 0 | `0x14D7070C` | `0x14D70700` | `0x0135C8A0` | WorldPlayerGaia | `0x18E14488` | 2 |
+| 1 | `0x147D601C` | `0x147D6010` | `0x0135CAE4` | WorldPlayerHumanOrCoop | `0x18E14488` | 1 |
+| 2 | `0x14C8D01C` | `0x14C8D010` | `0x0135C618` | WorldPlayerComputer | `0x18E14488` | 3 |
+
+Nos três casos, `object = controlBlock + 0x0C` e `player+0x04` aponta de volta para o `World` atual.
+
+Com isso, o critério semântico de readiness está validado em gameplay:
+
+~~~cpp
+bool IsWorldReady(World* w)
+{
+    if (!w) return false;
+    if (!w->mPlayersBegin || !w->mPlayersEnd) return false;
+    if (w->mPlayersEnd < w->mPlayersBegin) return false;
+
+    const size_t count = static_cast<size_t>(w->mPlayersEnd - w->mPlayersBegin);
+    if (count < 2 || count > 9) return false;
+
+    const int local = w->mLocalPlayerIndex;
+    if (local < 0 || static_cast<size_t>(local) >= count) return false;
+
+    auto* gaia = w->mPlayersBegin[0].object;
+    auto* me   = w->mPlayersBegin[local].object;
+    if (!gaia || !me) return false;
+
+    // validar vtables Gaia/HumanOrCoop e back-pointer +0x04 == w
+    return true;
+}
+~~~
+
+Ainda falta fechar **quando** os slots passam a conter `WorldPlayer*` válidos. Os três call sites conhecidos de `FUN_007288B0` não dispararam na transição testada; o próximo experimento é observar por hardware write `World+0x188` em uma nova criação de partida.
