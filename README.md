@@ -4,7 +4,7 @@ Projeto de engenharia reversa e reconstrução de uma API de controle para **Age
 
 ## Estado atual
 
-A cadeia central até `World`, o vetor `mPlayers` e a ponte entre configuração/lobby e `WorldPlayer` foram validados com Ghidra, RTTI e x32dbg.
+A cadeia central até `World`, o vetor `mPlayers`, a ponte entre configuração/lobby e `WorldPlayer` e parte relevante do lifecycle de construção/reset foram validadas com Ghidra, RTTI e x32dbg.
 
 Principais descobertas confirmadas:
 
@@ -16,10 +16,17 @@ Principais descobertas confirmadas:
 - tamanho alocado observado de `World`: `0x2DC` bytes;
 - `DAT_00AF2C58` fornece o `Owner*` usado na cadeia validada;
 - `Owner + 0xC8 → World*`;
+- `FUN_0062E5D0` publica o novo `World*` em `Owner+0xC8` em `0x0062E68B` e possui caminho de rollback que zera o mesmo campo em `0x0062E73A`;
+- portanto `Owner->world != nullptr` isoladamente não prova readiness;
 - `World + 0x174 → mLocalPlayerIndex`;
-- `World + 0x184/+0x188/+0x18C` formam um layout compatível com `std::vector` x86;
+- `World + 0x184/+0x188/+0x18C` formam um `std::vector` x86 confirmado;
 - `mPlayers.size() = (end - begin) / 8`;
-- cada entry de `mPlayers` tem 8 bytes e é fortemente compatível com `std::shared_ptr<WorldPlayer>`;
+- cada entry de `mPlayers` tem 8 bytes e o destrutor confirma semântica shared_ptr-like;
+- `FUN_00430160` destrói entries em stride 8 e decrementa strong/weak refs;
+- `FUN_00430DD0` destrói/libera o vetor e zera begin/end/capacity;
+- `FUN_0072C6E0` limpa `mPlayers` mantendo a capacidade (`end = begin`);
+- `FUN_0072F7D0` limpa/redimensiona `mPlayers` e mexe em `mLocalPlayerIndex`;
+- `FUN_007288B0` é uma rotina `resize`-like do vetor, com crescimento de capacidade ~1,5x;
 - RTTI confirma `WorldPlayerGaia`, `WorldPlayerHumanOrCoop` e `WorldPlayerComputer`;
 - `SlotRecord` tem stride `0x28`;
 - `SlotRecord+0x18` seleciona um `ResolvedPlayerConfig`;
@@ -203,9 +210,32 @@ FUN_00615A30
 ResolvedPlayerConfig+0x4C = playerNumberIndex
 ~~~
 
+## Readiness/lifecycle — progresso atual
+
+O estado do vetor pode passar por:
+
+~~~text
+buffer alocado, vetor vazio:
+begin != nullptr
+end == begin
+capacityEnd != nullptr
+~~~
+
+Logo, readiness deve usar o tamanho real e validar objetos concretos, não apenas ponteiros do vetor.
+
+`FUN_0072F7D0` faz:
+
+~~~text
+mPlayers.clear()
+→ FUN_007288B0(&mPlayers, newSize, ...)
+→ continua inicialização
+~~~
+
+`FUN_007288B0` calcula explicitamente size/capacity por divisão por 8 e implementa os três caminhos típicos de `std::vector::resize`.
+
 ## Próximo passo de maior retorno
 
-Consolidar readiness/lifecycle e fechar `GetLocalPlayer()` como API; em seguida iniciar recursos `Food/Wood/Gold/Stone`.
+Breakpoint estático em `0x0072FA04`, imediatamente após `0x0072F9FF CALL FUN_007288B0`, para observar se as entries já contêm `WorldPlayer*` válidos ou se ainda são slots vazios. Depois disso, consolidar `IsWorldReady()`, fechar `GetLocalPlayer()` e iniciar recursos `Food/Wood/Gold/Stone`.
 
 ## Documentação
 
