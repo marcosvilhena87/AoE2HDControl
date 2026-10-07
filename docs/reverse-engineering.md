@@ -672,37 +672,76 @@ mPlayers[mLocalPlayerIndex] → HumanOrCoop
 
 Mas `size > 0` ainda não garante que os `PlayerEntry.object` já estejam preenchidos.
 
+## Snapshot dinâmico adicional — moduleBase 0x00D80000
+
+Antes da partida, `0x01472C58` foi observado como nulo. Já em gameplay:
+
+~~~text
+[0x01472C58] = 0x03DFE440          ; Owner*
+[0x03DFE508] = 0x18E14488          ; World*
+
+World+0x174 = 1
+World+0x184 = 0x14932B78
+World+0x188 = 0x14932B90
+World+0x18C = 0x14932B90
+size = 3
+~~~
+
+Conteúdo do vetor:
+
+~~~text
+entry 0 object = 0x14D7070C, controlBlock = 0x14D70700
+  vtable = 0x0135C8A0 → WorldPlayerGaia
+  +0x04  = 0x18E14488
+  +0x08  = 2
+
+entry 1 object = 0x147D601C, controlBlock = 0x147D6010
+  vtable = 0x0135CAE4 → WorldPlayerHumanOrCoop
+  +0x04  = 0x18E14488
+  +0x08  = 1
+
+entry 2 object = 0x14C8D01C, controlBlock = 0x14C8D010
+  vtable = 0x0135C618 → WorldPlayerComputer
+  +0x04  = 0x18E14488
+  +0x08  = 3
+~~~
+
+Assim, em gameplay-ready, foram confirmados de uma vez:
+
+~~~text
+mLocalPlayerIndex = 1
+mPlayers[0] = Gaia
+mPlayers[mLocalPlayerIndex] = HumanOrCoop
+player+0x04 = World* nos três tipos
+object = controlBlock + 0x0C nos três entries
+~~~
+
+### Teste dos call sites de FUN_007288B0
+
+Com `moduleBase=0x00D80000`:
+
+~~~text
+0x0072F9FF → 0x010AF9FF
+0x00731917 → 0x010B1917
+0x00732E27 → 0x010B2E27
+~~~
+
+Os três breakpoints não dispararam na transição de partida testada. O breakpoint em `FUN_007288B0` propriamente dita disparava antes de “Iniciar o Jogo”, confirmando que é uma helper reutilizada e que não deve ser tratada como exclusiva de `mPlayers`.
+
 ## Próximo experimento
 
-Breakpoint estático:
+Em uma nova transição, resolver o `World*` atual e colocar hardware write em:
 
 ~~~text
-0x0072FA04
+World + 0x188   ; mPlayers.end
 ~~~
 
-É logo após:
-
-~~~text
-0x0072F9FF CALL FUN_007288B0
-~~~
-
-Ao parar, inspecionar:
-
-~~~text
-EDI = World*
-[EDI+174]
-[EDI+184]
-[EDI+188]
-[EDI+18C]
-entries em [[EDI+184]]
-~~~
-
-Objetivo: descobrir se o resize já cria shared_ptrs válidos ou apenas slots vazios.
+Objetivo: capturar a instrução que faz o tamanho do vetor crescer e então observar em que ponto as entries passam de slots vazios para `WorldPlayer*` semanticamente válidos.
 
 Depois:
 
 ~~~text
-1. consolidar IsWorldReady()
+1. consolidar IsWorldReady() como API
 2. fechar GetLocalPlayer() como API pública
 3. mapear Food/Wood/Gold/Stone
 ~~~
