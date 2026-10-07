@@ -1,6 +1,6 @@
 # Estruturas provisórias
 
-Última atualização: 2026-10-06.
+Última atualização: 2026-10-07.
 
 ## World
 
@@ -21,7 +21,7 @@ struct World : BaseWorld
 
     // ...
 
-    uint16_t mLocalPlayerIndexRaw; // +0x174
+    int32_t mLocalPlayerIndex; // +0x174
 
     // ...
 
@@ -88,10 +88,52 @@ Em todas:
 object = controlBlock + 0x0C
 ~~~
 
-RTTI contém `_Ref_count_obj` para Gaia/Human/Computer, reforçando:
+RTTI contém `_Ref_count_obj` para Gaia/Human/Computer.
+
+Além disso, `FUN_00430160` percorre entries em stride 8, lê o control block em `entry+0x4` e decrementa contagens em `controlBlock+0x4` e `controlBlock+0x8`, fechando fortemente:
 
 ~~~text
 std::vector<std::shared_ptr<WorldPlayer>> mPlayers
+~~~
+
+## Layout e operações de mPlayers
+
+O layout x86 do vetor está confirmado:
+
+~~~cpp
+struct PlayersVectorLike
+{
+    PlayerEntry* begin;       // +0x00
+    PlayerEntry* end;         // +0x04
+    PlayerEntry* capacityEnd; // +0x08
+};
+~~~
+
+Em `World`:
+
+~~~text
+World+0x184 = begin
+World+0x188 = end
+World+0x18C = capacityEnd
+~~~
+
+`FUN_00430DD0` destrói a faixa `[begin,end)`, libera o buffer e zera os três ponteiros.
+
+`FUN_007288B0` implementa comportamento de `resize` para elementos de 8 bytes:
+
+~~~text
+size     = (end - begin) / 8
+capacity = (capacityEnd - begin) / 8
+
+newSize > capacity
+  → realoca
+  → nova capacidade ≈ max(newSize, capacity + capacity/2)
+
+size < newSize <= capacity
+  → constrói apenas a cauda
+
+newSize < size
+  → destrói a cauda
 ~~~
 
 ## Hierarquia WorldPlayer
@@ -330,13 +372,44 @@ A relação é forte. A coluna visual **“Jog.”** é um conceito separado e a
 
 ## Lifecycle
 
-Ao trocar/criar partidas, `World` e objetos de player podem ser recriados.
+Ao trocar/criar partidas, `World` e objetos de player podem ser recriados ou resetados.
+
+`FUN_0062E5D0` publica o novo `World*` em `Owner+0xC8` em `0x0062E68B`, mas existe caminho de rollback em `0x0062E73A`.
+
+Além disso, `FUN_0072C6E0` pode esvaziar `mPlayers` mantendo o buffer:
+
+~~~text
+begin != nullptr
+end == begin
+capacityEnd != nullptr
+~~~
 
 Portanto:
 
 ~~~text
 valid World* != necessariamente gameplay-ready World
+begin != nullptr != vetor não vazio
 ponteiros derivados antigos podem ficar obsoletos
 ~~~
 
-O adapter deve resolver a cadeia atual e validar readiness antes de usar os objetos.
+Critério estrutural provisório:
+
+~~~cpp
+bool IsWorldStructurallyReady(World* w)
+{
+    if (!w) return false;
+    if (!w->mPlayersBegin || !w->mPlayersEnd) return false;
+    if (w->mPlayersEnd < w->mPlayersBegin) return false;
+
+    size_t count = static_cast<size_t>(w->mPlayersEnd - w->mPlayersBegin);
+    if (count < 2 || count > 9) return false;
+
+    if (w->mLocalPlayerIndex < 0 ||
+        static_cast<size_t>(w->mLocalPlayerIndex) >= count)
+        return false;
+
+    return true;
+}
+~~~
+
+Ainda falta fechar quando, após o resize, os slots passam a conter `WorldPlayer*` válidos. Próximo breakpoint: `0x0072FA04`.
