@@ -121,7 +121,7 @@ Pendente apenas nomear com maior precisão o objeto/contexto de lobby usado como
 
 ## Marco 5 — readiness / lifecycle
 
-Status: 🟡 avançado; a fronteira estrutural está bem mapeada, faltando a fronteira semântica.
+Status: 🟡 avançado; o critério semântico foi validado em gameplay, faltando fechar a fronteira temporal de criação.
 
 Já confirmado:
 
@@ -159,21 +159,30 @@ mPlayers begin/end coerentes
 0 <= localPlayerIndex < size
 ~~~
 
-Checks semânticos desejados:
+Checks semânticos agora validados em gameplay:
 
 ~~~text
 mPlayers[0] → Gaia
 mPlayers[localPlayerIndex] → HumanOrCoop
+player+0x04 → World* atual
 ~~~
 
-Experimento atual:
+Snapshot com `moduleBase=0x00D80000`:
 
 ~~~text
-breakpoint estático 0x0072FA04
-logo após 0x0072F9FF CALL FUN_007288B0
+World* = 0x18E14488
+localPlayerIndex = 1
+begin = 0x14932B78
+end   = 0x14932B90
+cap   = 0x14932B90
+size  = 3
+
+0 → Gaia
+1 → HumanOrCoop
+2 → Computer
 ~~~
 
-Objetivo: verificar se os slots já contêm `WorldPlayer*` válidos logo após o resize.
+Os três call sites conhecidos de `FUN_007288B0` não dispararam na transição testada. Experimento atual: hardware write em `World+0x188` de uma nova instância para capturar a instrução que efetivamente aumenta `mPlayers.end`.
 
 ## Marco 6 — jogador local
 
@@ -262,7 +271,7 @@ Detalhes: `docs/aoe2control-reference.md`.
 ## Ordem atual recomendada
 
 ~~~text
-1. breakpoint 0x0072FA04 e fechar fronteira slots vazios → players válidos
+1. hardware write em World+0x188 e fechar fronteira slots vazios → players válidos
 2. consolidar IsWorldReady()
 3. fechar GetLocalPlayer() como API
 4. mapear Food/Wood/Gold/Stone
