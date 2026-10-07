@@ -1,6 +1,6 @@
 # Roadmap
 
-Última atualização: 2026-10-04.
+Última atualização: 2026-10-06.
 
 ## Marco 1 — cadeia estável até World
 
@@ -81,9 +81,18 @@ configs 2..7 → worldPlayerIndex -1 → humanity 1 na amostra
 
 ## Marco 4 — localizar “Jog.” 1–8 / número-cor
 
-Status: 🔴 próximo alvo de maior retorno.
+Status: ✅ concluído estruturalmente.
 
-Já sabemos que a coluna visual **“Jog.”** não é:
+Confirmado:
+
+~~~text
+ResolvedPlayerConfig+0x4C = playerNumberIndex
+Jog.1 → 0
+Jog.2 → 1
+Jog.3 → 2
+~~~
+
+O campo é zero-based e distinto de:
 
 ~~~text
 player+0x08
@@ -92,20 +101,23 @@ ResolvedPlayerConfig.worldPlayerIndex
 World.mLocalPlayerIndex
 ~~~
 
-Objetivo:
+Também foi fechada a cadeia de UI:
 
 ~~~text
-identificar o campo que representa a atribuição visual 1..8
-e mapear leitura/escrita dessa configuração
+FUN_0064F0E0: configIndex 0..7, stride de linha 0x70
+  ↓
+PlayerNumberCallback { target, configIndex }
+  ↓
+LAB_00653CD0
+  ↓
+FUN_00658E40(configIndex)
+  ↓
+FUN_00615A30
+  ↓
+ResolvedPlayerConfig+0x4C
 ~~~
 
-Método recomendado:
-
-1. manter a mesma linha/pessoa no lobby;
-2. alterar apenas “Jog.” entre dois valores;
-3. comparar estruturas de configuração relevantes;
-4. usar breakpoint de escrita quando um candidato aparecer;
-5. confirmar que a alteração acompanha 1↔2↔...↔8 sem mudar `configIndex` ou classe do player.
+Pendente apenas nomear com maior precisão o objeto/contexto de lobby usado como `target`.
 
 ## Marco 5 — readiness / lifecycle
 
@@ -220,12 +232,11 @@ Detalhes: `docs/aoe2control-reference.md`.
 ## Ordem atual recomendada
 
 ~~~text
-1. localizar campo “Jog.” 1–8 / número-cor
-2. consolidar IsWorldReady()
-3. fechar GetLocalPlayer() como API
-4. mapear Food/Wood/Gold/Stone
-5. mapear objetos/unidades
-6. mapear comandos
-7. trocar RVAs críticos por signatures
-8. implementar HDAdapter
+1. consolidar IsWorldReady()
+2. fechar GetLocalPlayer() como API
+3. mapear Food/Wood/Gold/Stone
+4. mapear objetos/unidades
+5. mapear comandos
+6. trocar RVAs críticos por signatures
+7. implementar HDAdapter
 ~~~
