@@ -1,12 +1,12 @@
 # Funções mapeadas
 
-Última atualização: 2026-10-06.
+Última atualização: 2026-10-07.
 
 ## Convenção de endereços
 
 Os endereços principais abaixo são os endereços estáticos do binário com ImageBase `0x00400000`.
 
-Na execução analisada em 04/10/2026, `moduleBase = 0x00410000`, portanto os endereços runtime estavam deslocados em `+0x10000`.
+ASLR varia entre execuções. Já foram observados `moduleBase = 0x00410000` e `moduleBase = 0x00D80000`; sempre recalcular o runtime por RVA.
 
 ## FUN_006889B0
 
@@ -51,6 +51,49 @@ Estado: ✅ para os campos acima.
 
 Estado: ✅ para a relação estrutural.
 
+## FUN_0062E5D0 — criação/publicação de World
+
+Endereço estático: `0x0062E5D0`.
+
+Fluxo confirmado:
+
+~~~asm
+0062E62E  PUSH 2DCh
+0062E633  CALL operator_new
+...
+0062E65A  CALL FUN_006889B0
+...
+0062E671  MOV EAX,[EBP+local_20] ; Owner*
+0062E674  ADD EAX,0C8h
+...
+0062E689  MOV EDX,[EAX]          ; World* antigo
+0062E68B  MOV [EAX],ECX          ; Owner+0xC8 = novo World*
+~~~
+
+Depois da publicação há chamada virtual pelo slot `World.vtable+0x04`, resolvido para `FUN_0072D1A0`.
+
+Também existe rollback:
+
+~~~asm
+0062E734  MOV ECX,[ESI+0C8h]
+0062E73A  MOV [ESI+0C8h],0
+...
+0062E74C  CALL [EAX]
+~~~
+
+Conclusão: `Owner+0xC8 != nullptr` isoladamente não prova gameplay readiness.
+
+Estado: ✅ para publicação/rollback; 🟡 para semântica completa da inicialização virtual.
+
+## FUN_0072D1A0 — World vtable slot +0x04
+
+Endereço: `0x0072D1A0`.
+Vtable entry: `0x009D32A0`.
+
+No início instala/solta estado em `World+0x170` e zera `World+0x17C`. Até agora não foi localizada escrita direta em `+0x184/+0x188/+0x18C` nessa função.
+
+Estado: 🟡.
+
 ## FUN_00659750
 
 ~~~asm
@@ -63,6 +106,125 @@ Conclusão:
 ~~~text
 [DAT_00AF2C58] = Owner*
 ~~~
+
+Estado: ✅.
+
+## FUN_00430160 — DestroySharedPtrRange
+
+Endereço: `0x00430160`.
+
+Percorre `[begin,end)` com stride 8:
+
+~~~asm
+00430170  MOV ESI,[EDI+4]
+...
+0043017A  XADD.LOCK [ESI+4],EAX
+...
+00430185  CALL [EAX]
+...
+0043018A  XADD.LOCK [ESI+8],EAX
+...
+00430195  CALL [EAX+4]
+00430198  ADD EDI,8
+~~~
+
+Interpretação:
+
+~~~text
+entry+0x4 = controlBlock
+controlBlock+0x4 = strong refcount
+controlBlock+0x8 = weak refcount
+~~~
+
+Estado: ✅.
+
+## FUN_00430DD0 — DestroyPlayersVectorLike
+
+Endereço: `0x00430DD0`.
+
+Com `ECX=&mPlayers` destrói `[begin,end)`, libera o buffer e zera:
+
+~~~text
+vector+0 = begin
+vector+4 = end
+vector+8 = capacityEnd
+~~~
+
+Estado: ✅.
+
+## FUN_0072C6E0 — reset/clear de World
+
+Endereço: `0x0072C6E0`.
+
+Trecho-chave:
+
+~~~asm
+0072C82D  MOV EAX,[ESI+188]
+0072C833  MOV EDI,[ESI+184]
+...
+0072C840  MOV ECX,[EDI]
+0072C846  CALL FUN_0074E5C0
+0072C84E  ADD EDI,8
+...
+0072C85C  LEA EDI,[ESI+184]
+0072C868  CALL FUN_00430160
+0072C86D  MOV EAX,[EDI]
+0072C872  MOV [EDI+4],EAX
+~~~
+
+Interpretação estrutural: percorre players, destrói shared_ptrs e faz `end = begin`, preservando capacidade.
+
+Estado: ✅ estrutural.
+
+## FUN_0072F7D0 — reconstrução/preparo de mPlayers
+
+Endereço: `0x0072F7D0`.
+
+Fluxo:
+
+~~~asm
+0072F8F0  MOV [EDI+174],EAX
+...
+0072F9A8  LEA EAX,[EDI+184]
+0072F9B4  CALL FUN_00430160
+0072F9B9  MOV EAX,[EDI+184]
+0072F9C2  MOV [EDI+188],EAX
+...
+0072F9F2  LEA ECX,[EDI+184]
+0072F9FF  CALL FUN_007288B0
+...
+0072FA89  MOV [EDI+174],1
+~~~
+
+Confirma clear + resize de `mPlayers` e escrita em `mLocalPlayerIndex`. Ainda falta saber se após `0072F9FF` os slots já contêm players válidos.
+
+Estado: ✅ estrutural / 🟡 readiness.
+
+## FUN_007288B0 — ResizePlayersVectorLike
+
+Endereço: `0x007288B0`.
+
+No início:
+
+~~~asm
+007288E3  MOV EDX,[EDI+4]
+007288E6  MOV ESI,[EDI]
+007288EA  SUB EAX,ESI
+007288EC  SAR EAX,3
+...
+007288F2  MOV ECX,[EDI+8]
+007288F5  SUB ECX,ESI
+007288F7  SAR ECX,3
+~~~
+
+Logo:
+
+~~~text
+size     = (end - begin) / 8
+capacity = (capacityEnd - begin) / 8
+~~~
+
+A função implementa os três caminhos de resize. Se precisa realocar, cresce aproximadamente `max(newSize, capacity + capacity/2)`, aloca `newCapacity*8` e ao final escreve begin/end/capacityEnd.
 
 Estado: ✅.
 
@@ -435,6 +597,29 @@ Chamada no início de `FUN_006889B0` antes da escrita da vtable de `World`.
 Hipótese: inicializador/construtor de `BaseWorld`.
 
 Confiança: 🟡.
+
+## Próximo experimento de readiness
+
+Breakpoint estático:
+
+~~~text
+0x0072FA04
+~~~
+
+É a instrução imediatamente após `0x0072F9FF CALL FUN_007288B0`.
+
+Ao parar, inspecionar:
+
+~~~text
+EDI = World*
+[EDI+174]
+[EDI+184]
+[EDI+188]
+[EDI+18C]
+entries em [[EDI+184]]
+~~~
+
+Objetivo: distinguir `size > 0` de `PlayerEntry.object != nullptr` e localizar a fronteira real em que Gaia/jogadores passam a existir.
 
 ## Nota de lifecycle
 
