@@ -1,6 +1,6 @@
 # Engenharia reversa — estado consolidado
 
-Última atualização: 2026-10-04.
+Última atualização: 2026-10-06.
 
 ## Alvo
 
@@ -428,6 +428,100 @@ Campos observados:
 
 `humanity=3` ainda não foi observado diretamente e não deve ser nomeado.
 
+## Coluna “Jog.” / playerNumberIndex
+
+A coluna visual “Jog.” 1–8 foi localizada em:
+
+~~~text
+ResolvedPlayerConfig + 0x4C = playerNumberIndex
+~~~
+
+Validação dinâmica mantendo a mesma linha/configuração:
+
+~~~text
+Jog.1 → 0
+Jog.2 → 1
+Jog.3 → 2
+~~~
+
+Logo o campo é zero-based; para `Jog.1..8`, o domínio esperado é `0..7`.
+
+O setter foi capturado por hardware breakpoint:
+
+~~~asm
+00615A30  PUSH EBP
+00615A31  MOV  EBP,ESP
+00615A33  MOV  EAX,[EBP+8]
+00615A36  MOV  [ECX+4C],EAX
+00615A39  POP  EBP
+00615A3A  RET  4
+~~~
+
+### UI → configuração
+
+A rotina `FUN_0064F0E0` inicializa `ESI=0`, calcula cada linha como `EDI + ESI*0x70` e encerra após `ESI==8`:
+
+~~~asm
+006500F3  XOR ESI,ESI
+00650131  IMUL EAX,ESI,70h
+00650139  ADD EAX,EDI
+...
+00651506  INC ESI
+0065150D  CMP ESI,08
+00651510  JC 00650131
+~~~
+
+Portanto `ESI = configIndex = 0..7` nesse fluxo.
+
+A mesma rotina prepara:
+
+~~~text
+local_1BC = EDI
+local_1B8 = ESI
+~~~
+
+e chama `FUN_00644C10`, que cria um objeto de 12 bytes:
+
+~~~cpp
+struct PlayerNumberCallback {
+    void** vtable;       // +0x00 = 0x009D1128
+    void* target;        // +0x04
+    int32_t configIndex; // +0x08
+};
+~~~
+
+O thunk virtual `00653CD0` transforma esse objeto em uma chamada:
+
+~~~text
+target->FUN_00658E40(configIndex)
+~~~
+
+`FUN_00658E40` resolve a seleção da UI e chama `FUN_00615A30` sobre o `ResolvedPlayerConfig` correspondente.
+
+Cadeia consolidada:
+
+~~~text
+configIndex 0..7
+  ↓
+linha UI (stride 0x70)
+  ↓
+PlayerNumberCallback
+  ↓
+FUN_00658E40(configIndex)
+  ↓
+FUN_00615A30
+  ↓
+ResolvedPlayerConfig+0x4C = playerNumberIndex
+~~~
+
+Isso separa definitivamente:
+
+~~~text
+configIndex       = qual configuração/linha está sendo editada
+playerNumberIndex = qual “Jog.” 1–8 está atribuído a ela
+worldPlayerIndex  = índice correspondente em World.mPlayers quando existe
+~~~
+
 ## Gaia
 
 Confirmado:
@@ -455,20 +549,10 @@ resolver a cadeia novamente após mudança de partida/setup
 
 ## Próximo passo de maior retorno
 
-Localizar o campo responsável pela coluna visual:
+O campo “Jog.” está fechado. Próximos alvos:
 
 ~~~text
-“Jog.” = 1..8 / número-cor atribuída
+1. consolidar readiness/lifecycle
+2. fechar GetLocalPlayer() como API pública
+3. mapear Food/Wood/Gold/Stone
 ~~~
-
-Esse campo já foi separado de:
-
-~~~text
-World.mPlayers index
-mLocalPlayerIndex
-SlotRecord.configIndex
-ResolvedPlayerConfig.worldPlayerIndex
-player+0x08
-~~~
-
-Depois: consolidar readiness e iniciar recursos `Food/Wood/Gold/Stone`.
